@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// __OWNER_UID__ 는 배포할 때 deploy.yml이 GitHub 변수 OWNER_UID 값으로 바꾼다.
+// 수집기는 서비스 계정을 쓰므로 이 규칙과 관계없이 읽고 쓴다.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner() {
+      return request.auth != null && request.auth.uid == '__OWNER_UID__';
+    }
+
+    match /channels/{id} {
+      allow read, write: if isOwner();
+    }
+
+    // 웹에서는 재수집 요청(상태 되돌리기)만 할 수 있다
+    match /videos/{id} {
+      allow read: if isOwner();
+      allow update: if isOwner()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'attempts', 'error', 'deferDay', 'topicFiltered', 'updatedAt'])
+        && request.resource.data.status == 'pending';
+    }
+
+    match /transcripts/{id} {
+      allow read: if isOwner();
+    }
+
+    // 영상별 구조화 요약. 외부 Google 계정은 이 규칙이 아니라 IAM 역할(Cloud Datastore 뷰어)로 읽는다
+    match /summaries/{id} {
+      allow read: if isOwner();
+    }
+
+    match /jobs/{id} {
+      allow read: if isOwner();
+      allow create: if isOwner()
+        && request.resource.data.type in ['collect_all', 'reprocess']
+        && request.resource.data.status == 'pending';
+    }
+
+    // 수집기 상태 (meta/youtube: 오늘 받은 수 · 상한 · 채널 몫). 수집 현황 화면이 읽는다
+    match /meta/{id} {
+      allow read: if isOwner();
+    }
+
+    match /runs/{id} {
+      allow read: if isOwner();
+      match /logs/{logId} {
+        allow read: if isOwner();
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+name = "yutb-collect-trigger"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+# red9keep 계정 고정. 다른 계정으로 로그인돼 있으면 복사본을 만들지 않고 오류가 난다
+account_id = "079c150449cb21452c800bc0df517dff"
+workers_dev = false   # HTTP 주소 없음 — cron으로만 돈다
+
+[triggers]
+# UTC. 한국 시간과 분(分)이 같다 (KST = UTC + 9, 서머타임 없음).
+# 1분마다 깨어난다. 실제로 걸지는 src/index.js 회차 표(회차마다 무작위 분)가 정한다. 트리거 1개
+crons = ["* * * * *"]
+
+# 비밀값은 여기 쓰지 않는다: npx wrangler secret put GITHUB_TOKEN

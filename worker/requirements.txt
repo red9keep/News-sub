@@ -1,0 +1,6 @@
+firebase-admin>=6.5
+google-genai>=1.20
+requests>=2.32
+# 유튜브가 자주 바뀌므로 버전을 묶지 않는다. 워크플로가 실행마다 최신으로 설치한다
+yt-dlp[default]
+yfinance>=0.2.50

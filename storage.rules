@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// __OWNER_UID__ 는 배포할 때 deploy.yml이 GitHub 변수 OWNER_UID 값으로 바꾼다.
+// 파일 쓰기는 서비스 계정을 쓰는 수집기만 한다.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /ai_ready_texts/{allPaths=**} {
+      allow read: if request.auth != null && request.auth.uid == '__OWNER_UID__';
+      allow write: if false;
+    }
+  }
+}

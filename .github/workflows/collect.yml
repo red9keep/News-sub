@@ -1,0 +1,135 @@
+name: collect
+
+# 정시 실행은 바깥 예약기(cron-trigger/, Cloudflare Worker)가 workflow_dispatch(scheduled=true)로 건다.
+# GitHub cron은 정시를 보장하지 않아(10-22 하루 0회) 아래 schedule은 예비로 둔다. 둘 다 돌아도 뒤 실행은 할 일이 없어 바로 끝난다.
+# Worker는 회차마다 실행 시각을 무작위로 고른다(10-23). 예비 cron이 매시 같은 분에 돌면 그 모양이 다시 생기므로 하루 두 번만 둔다
+# 시각을 바꾸면 ① cron-trigger/src/index.js 회차 표 ② 아래 cron ③ Firestore 채널 예약을 같이 맞춘다
+on:
+  schedule:
+    # cron은 UTC 기준 (KST - 9시간). Worker가 빠졌을 때 밀린 것을 줍는 용도
+    # 한국 시간 06:47 (일반 채널, 밤사이 못 받은 것) · 11:50 (필수 채널, 오전 마지막)
+    - cron: "47 21 * * *"
+    - cron: "50 2 * * *"
+  workflow_dispatch:
+    inputs:
+      collect_all:
+        description: "예약 시각과 관계없이 모든 채널 수집"
+        type: boolean
+        default: true
+      scheduled:
+        description: "바깥 예약기용: 예약 실행과 똑같이 동작 (예약 시각이 지난 채널만, collect_all 무시). 사람은 끄고 쓴다"
+        type: boolean
+        default: false
+
+# 실행이 겹치지 않게 한 번에 하나만 돈다
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+# 공개 저장소: 워크플로 토큰은 읽기만
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    # vpn-up.sh는 11-13 swanctl 판으로 바꿔 26.04에서도 VPN 시험 통과 (trial run 43364185072).
+    # 다른 단계(Python · Deno)는 26.04에서 안 돌려 봤으므로 24.04에 둔다. 24.04 종료 공지가 나오면 이 줄만 바꾼다
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+
+      - run: |
+          pip install -r worker/requirements.txt
+          pip install -U "yt-dlp[default]"
+
+      # 오늘 영상을 이미 받은 필수 채널은 건너뛴다. 할 일이 없으면 VPN · 유튜브 요청 없이 끝낸다
+      - name: 할 일 확인
+        id: check
+        working-directory: worker
+        run: python collector.py --check
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
+          COLLECT_ALL: ${{ (inputs.scheduled && 'false') || inputs.collect_all }}
+
+      # yt-dlp가 유튜브 화면의 자바스크립트를 풀 때 쓴다
+      # 내려받기가 GitHub 릴리스 서버 오류(504 등)로 가끔 실패한다 (11-09 한국 채널 회차가 통째로 빠짐).
+      # 첫 시도가 실패하면 잠깐 쉬고 한 번 더 받는다. 그래도 안 되면 Deno 없이 수집을 이어 간다
+      - name: Deno 설치
+        id: deno1
+        if: steps.check.outputs.need == 'true' && vars.CAPTIONS_MODE != 'off'
+        continue-on-error: true
+        uses: denoland/setup-deno@v2
+
+      - name: Deno 설치 다시 시도 전 대기
+        if: steps.deno1.outcome == 'failure'
+        run: sleep 60
+
+      - name: Deno 설치 (다시 시도)
+        if: steps.deno1.outcome == 'failure'
+        continue-on-error: true
+        uses: denoland/setup-deno@v2
+
+      # 실패해도 수집은 계속한다. 이때 수집기는 자막 받기를 보류하고 새 영상을 대기로 둔다
+      - name: 집 공유기 VPN 연결
+        id: vpn
+        if: steps.check.outputs.need == 'true' && vars.CAPTIONS_MODE != 'off'
+        continue-on-error: true
+        # Ubuntu 26.04 sudo는 -E를 무시한다 (11-11부터 Secret이 빈 값으로 넘어가 VPN 실패). 필요한 변수만 직접 넘긴다
+        run: sudo env VPN_SERVER="$VPN_SERVER" VPN_PSK="$VPN_PSK" VPN_USER="$VPN_USER" VPN_PASSWORD="$VPN_PASSWORD" GITHUB_OUTPUT="$GITHUB_OUTPUT" bash scripts/vpn-up.sh
+        env:
+          VPN_SERVER: ${{ secrets.VPN_SERVER }}
+          VPN_PSK: ${{ secrets.VPN_PSK }}
+          VPN_USER: ${{ secrets.VPN_USER }}
+          VPN_PASSWORD: ${{ secrets.VPN_PASSWORD }}
+
+      - name: 수집 실행
+        id: collect
+        if: steps.check.outputs.need == 'true'
+        working-directory: worker
+        run: python collector.py
+        env:
+          PYTHONUNBUFFERED: "1"  # 로그가 바로 보이게
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}   # 망가졌을 때만 알림 (worker/notify.py). 없으면 안 보냄
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          NVIDIA_MODEL: ${{ vars.NVIDIA_MODEL }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          GEMINI_TEXT_MODEL: ${{ vars.GEMINI_TEXT_MODEL }}
+          MAX_DURATION_MIN: ${{ vars.MAX_DURATION_MIN }}
+          CAPTIONS_MODE: ${{ vars.CAPTIONS_MODE }}
+          MAX_CAPTIONS_PER_RUN: ${{ vars.MAX_CAPTIONS_PER_RUN }}
+          MAX_CAPTIONS_PER_DAY: ${{ vars.MAX_CAPTIONS_PER_DAY }}
+          TOPIC_FILTER: ${{ vars.TOPIC_FILTER }}
+          SUMMARIZE: ${{ vars.SUMMARIZE }}
+          YT_SOURCE_ADDRESS: ${{ steps.vpn.outputs.ip }}
+          YT_PLAYER_CLIENT: ${{ vars.YT_PLAYER_CLIENT }}
+          YT_PLAYER_SKIP: ${{ vars.YT_PLAYER_SKIP }}
+          RUN_TRIGGER: ${{ (inputs.scheduled && 'schedule') || github.event_name }}
+          COLLECT_ALL: ${{ (inputs.scheduled && 'false') || inputs.collect_all }}
+
+      - name: VPN 끊기
+        if: always() && steps.vpn.outcome == 'success'
+        run: sudo bash scripts/vpn-down.sh
+
+      # 수집기가 직접 알리지 못하는 실패 (패키지 설치 · 할 일 확인처럼 수집 실행 전 단계에서 죽음)
+      - name: 실패 알림
+        if: failure() && steps.collect.outcome != 'failure'
+        run: |
+          [ -n "$SLACK_WEBHOOK_URL" ] || { echo "Slack 주소 없음, 보내지 않음"; exit 0; }
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body=$(printf '{"text":"[영상 수집기] 실행 중단 — 수집 전 준비 단계 실패, 이번 회차가 끝까지 못 감\\n실행 로그: %s","unfurl_links":false}' "$url")
+          curl -sS -o /dev/null -X POST -H 'Content-Type: application/json' --data "$body" "$SLACK_WEBHOOK_URL" || echo "Slack 알림 보내기 실패"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

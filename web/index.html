@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#FFFFFF">
+  <title>유튜브 스마트 비서</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <!-- ui-kit.css 는 external-ui-kit 에서 고치지 않고 복사한 파일. 앱 전용 스타일은 app.css -->
+  <link rel="stylesheet" href="ui-kit.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body class="ui-root">
+  <!-- 아이콘: 한 번 정의하고 <use> 로 쓴다 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7v4M8 5h.01" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 16 16"><rect x="1.5" y="6" width="2" height="4" rx="1" fill="currentColor"/><rect x="5" y="3" width="2" height="10" rx="1" fill="currentColor"/><rect x="8.5" y="1.5" width="2" height="13" rx="1" fill="currentColor"/><rect x="12" y="5" width="2" height="6" rx="1" fill="currentColor"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-list" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="2" rx="1" fill="currentColor"/><rect x="2" y="7" width="12" height="2" rx="1" fill="currentColor"/><rect x="2" y="11" width="8" height="2" rx="1" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-external" viewBox="0 0 16 16"><path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 3.5v-.5a1 1 0 0 0-1-1H3.5a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-user" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="3" fill="currentColor"/><path d="M2.5 14c.6-3 2.8-4.5 5.5-4.5s4.9 1.5 5.5 4.5z" fill="currentColor"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 22 22"><circle cx="11" cy="11" r="10" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M11 15.5v-9M7 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 16 16"><path d="M10.5 2.5l3 3-8 8H2.5v-3z M9 4l3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-tabs" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="2.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="1.5" y="9.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="9.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 16 16"><path d="M1.5 8.5h3l2-5 3 9 2-4h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 16 16"><path d="M2 2.5h5.5l6.5 6.5-5 5L2.5 7.5V2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="5.3" cy="5.8" r="1.2" fill="currentColor"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 4.5V8l2.5 1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <!-- 로그인 화면 -->
+  <div class="auth-wrap" id="login-view" hidden>
+    <section class="ui-dash-card auth-box">
+      <div class="ui-logo auth-logo"><span class="ui-tile ui-tile--red logo-mark" aria-hidden="true"><svg><use href="#i-wave"/></svg></span>유튜브 스마트 비서</div>
+      <p class="ui-small ui-sub auth-intro">등록한 채널의 새 영상을 받아써서 모아 둡니다.</p>
+      <button class="ui-btn-white google-btn" id="login-btn" type="button">
+        <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+        Google로 로그인
+      </button>
+      <div class="ui-info ui-info--in-card"><svg><use href="#i-info"/></svg><span>소유자로 등록된 Google 계정만 쓸 수 있습니다.</span></div>
+    </section>
+  </div>
+
+  <!-- 소유자가 아닐 때 -->
+  <div class="auth-wrap" id="denied-view" hidden>
+    <section class="ui-dash-card auth-box">
+      <div class="ui-logo auth-logo"><span class="ui-tile ui-tile--red logo-mark" aria-hidden="true"><svg><use href="#i-wave"/></svg></span>유튜브 스마트 비서</div>
+      <div class="ui-emph ui-emph--warn auth-emph">이 계정은 소유자로 등록되어 있지 않습니다.</div>
+      <div class="ui-field auth-left">
+        <span class="ui-field-name">내 UID</span>
+        <div class="ui-copy"><code id="denied-uid"></code><button class="ui-btn-outline" id="uid-copy" type="button">복사</button></div>
+      </div>
+      <ol class="ui-steps auth-left">
+        <li><span class="ui-step-num">1</span><span>GitHub 변수 OWNER_UID에 이 값을 넣습니다.</span></li>
+        <li><span class="ui-step-num">2</span><span>Actions에서 deploy를 다시 실행합니다.</span></li>
+        <li><span class="ui-step-num">3</span><span>이 화면을 새로 고칩니다.</span></li>
+      </ol>
+      <button class="ui-btn-white logout-btn auth-logout" type="button">다른 계정으로 로그인</button>
+    </section>
+  </div>
+
+  <!-- 본 화면 -->
+  <header class="ui-header" id="app-header" hidden>
+    <a class="ui-logo" href="#"><span class="ui-tile ui-tile--red logo-mark" aria-hidden="true"><svg><use href="#i-wave"/></svg></span><span><span class="logo-pre">유튜브 </span>스마트 비서</span></a>
+    <div class="ui-header-tools">
+      <!-- 분류 라벨 탭: 채널 탭 ↔ 분류 라벨 탭 (최근 48시간 요약을 라벨별로) -->
+      <button class="ui-icon-btn" id="cat-toggle" type="button" aria-pressed="false" aria-controls="channel-tabs" aria-label="분류 라벨별로 보기" title="분류 라벨별로 보기"><svg width="16" height="16" aria-hidden="true"><use href="#i-tag"/></svg></button>
+      <!-- 채널 탭 전체 펼치기: 한 줄 가로 스크롤 ↔ 여러 줄에 모두 -->
+      <button class="ui-icon-btn tabs-toggle" id="tabs-toggle" type="button" aria-pressed="false" aria-controls="channel-tabs" aria-label="채널 탭 모두 보기" title="채널 탭 모두 보기"><svg width="16" height="16" aria-hidden="true"><use href="#i-tabs"/></svg></button>
+      <a class="ui-icon-btn" id="settings-link" href="#settings" aria-label="설정" title="설정"><svg width="16" height="16" aria-hidden="true"><use href="#i-gear"/></svg></a>
+    </div>
+  </header>
+
+  <main class="ui-shell ui-shell--dash app-shell" id="app-main" hidden>
+    <!-- 첫 화면: 탭(위에 고정) → 요약. 탭은 모아보기 · 채널들, 또는 분류 라벨들. 카드 없이 흰 바탕에 바로 놓는다 -->
+    <div id="view-home">
+      <div class="ui-tabs app-tabs" role="tablist" id="channel-tabs"></div>
+      <section class="home-body" aria-label="요약">
+        <div class="home-head">
+          <span class="ui-meta ui-num" id="home-date"></span><button class="ui-text-btn" type="button" id="home-today" hidden>오늘로</button>
+        </div>
+        <div id="home-items"><div class="ui-empty">불러오는 중…</div></div>
+        <details class="ui-fold date-fold" id="date-fold">
+          <summary><span>이전 날짜 보기</span><svg class="ui-chev" width="16" height="16" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+          <div id="date-rows"></div>
+          <div class="ui-segs page-segs" id="date-pages" hidden></div>
+        </details>
+        <div class="home-foot">
+          <button class="ui-top-btn top-btn" type="button" id="to-top">TOP<svg width="22" height="22" aria-hidden="true"><use href="#i-up"/></svg></button>
+        </div>
+      </section>
+    </div>
+
+    <!-- 설정 화면 (톱니 아이콘): 설정 · 로그(수집 현황) · 수집 결과 전체 · 채널 관리 -->
+    <div id="view-settings" hidden>
+      <div class="settings-head">
+        <a class="ui-top-btn" href="#">← 요약으로</a>
+      </div>
+      <div class="ui-subtabs settings-tabs" role="tablist">
+        <button class="ui-subtab" role="tab" type="button" data-tab="logs" aria-selected="true">설정 · 로그</button>
+        <button class="ui-subtab" role="tab" type="button" data-tab="results" aria-selected="false">수집 결과</button>
+        <button class="ui-subtab" role="tab" type="button" data-tab="channels" aria-selected="false">채널</button>
+      </div>
+
+      <!-- 채널 -->
+      <div class="ui-dash" id="view-channels">
+      <details class="ui-dash-card ui-fold ui-fold--card ui-span-all" id="channel-fold">
+        <summary>
+          <span class="ui-section-title"><span class="ui-tile ui-tile--red" aria-hidden="true"><svg><use href="#i-plus"/></svg></span><span id="form-title">채널 등록</span></span>
+          <svg class="ui-chev" width="16" height="16" aria-hidden="true"><use href="#i-chev"/></svg>
+        </summary>
+        <form class="ui-card-body ui-card-body--pad" id="channel-form" novalidate>
+          <input type="hidden" name="id">
+          <div class="form-grid">
+            <label class="ui-field"><span class="ui-field-name">채널 이름</span><input class="ui-field-input" name="name" autocomplete="off" placeholder="예: CNBC Television"></label>
+            <label class="ui-field"><span class="ui-field-name">주소</span><input class="ui-field-input" name="url" inputmode="url" autocomplete="off" placeholder="예: https://www.youtube.com/@CNBCtelevision"></label>
+            <label class="ui-field"><span class="ui-field-name">수집 개수 <span class="ui-paren">(최신 영상, 최대 20개)</span></span><select class="ui-field-input" name="count"></select></label>
+            <label class="ui-field"><span class="ui-field-name">수집 시각 <span class="ui-paren">(한국 시간)</span></span><input class="ui-field-input" name="times" inputmode="numeric" autocomplete="off" placeholder="예: 08:10, 12:10"></label>
+            <label class="ui-field"><span class="ui-field-name">하루 몫 <span class="ui-paren">(필수 채널은 쓰지 않음)</span></span><select class="ui-field-input" name="dayMax"></select></label>
+          </div>
+          <div class="ui-field">
+            <span class="ui-field-name">자동 수집</span>
+            <div class="ui-segs" id="enabled-segs"><button class="ui-seg" type="button" data-value="on" aria-pressed="true">사용</button><button class="ui-seg" type="button" data-value="off" aria-pressed="false">중지</button></div>
+          </div>
+          <div class="ui-info ui-info--in-card"><svg><use href="#i-info"/></svg><span>주소에는 채널(@핸들) · 재생목록 · 영상 주소를 넣을 수 있습니다.</span></div>
+          <div class="ui-info ui-info--in-card"><svg><use href="#i-info"/></svg><span>수집은 필수 채널 07:35 ~ 11:35 30분마다, 일반 채널 21:25 ~ 07:25 매시 실행합니다. 예약 시각이 지난 뒤 첫 실행에서 처리합니다.</span></div>
+          <div class="ui-error" id="form-error"></div>
+          <div class="form-actions" id="form-actions">
+            <button class="ui-btn-white" type="button" id="channel-cancel" hidden>취소</button>
+            <button class="ui-btn ui-btn--block" type="submit" id="channel-submit">등록</button>
+          </div>
+        </form>
+      </details>
+
+      <section class="ui-dash-card ui-span-all">
+        <div class="ui-section-head">
+          <h2 class="ui-section-title"><span class="ui-tile ui-tile--blue" aria-hidden="true"><svg><use href="#i-list"/></svg></span>등록된 채널</h2>
+          <span class="ui-meta ui-num" id="channel-count"></span>
+        </div>
+        <div class="ui-card-body" id="channel-rows"><div class="ui-empty">불러오는 중…</div></div>
+      </section>
+      </div>
+
+      <!-- 수집 결과 -->
+      <div class="ui-dash" id="view-results" hidden>
+      <section class="ui-dash-card ui-span-all">
+        <div class="ui-section-head">
+          <h2 class="ui-section-title"><span class="ui-tile ui-tile--teal" aria-hidden="true"><svg><use href="#i-check"/></svg></span>수집 결과</h2>
+          <span class="ui-note">최근 200개</span>
+        </div>
+        <div class="ui-card-body">
+          <div class="filters">
+            <select class="ui-field-input" id="filter-channel" aria-label="채널"><option value="">모든 채널</option></select>
+            <select class="ui-field-input" id="filter-status" aria-label="상태">
+              <option value="">모든 상태</option>
+              <option value="done">완료</option>
+              <option value="pending">대기</option>
+              <option value="failed">실패</option>
+              <option value="skipped">건너뜀</option>
+            </select>
+          </div>
+          <div id="video-rows"><div class="ui-empty">불러오는 중…</div></div>
+          <button class="ui-fold-btn" type="button" id="video-fold" aria-expanded="false" hidden><span></span><svg class="ui-chev" width="16" height="16" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+      </section>
+      </div>
+
+      <!-- 설정 · 로그 -->
+      <div class="ui-dash" id="view-logs" hidden>
+      <!-- 수집 현황: 묶음(전날 12:00 ~ 당일 11:59)별 영상 상태 -->
+      <section class="ui-dash-card ui-span-all">
+        <div class="ui-section-head">
+          <h2 class="ui-section-title"><span class="ui-tile ui-tile--red" aria-hidden="true"><svg><use href="#i-pulse"/></svg></span>수집 현황</h2>
+          <div class="ui-segs" id="stat-segs"><button class="ui-seg" type="button" data-day="0" aria-pressed="true">오늘</button><button class="ui-seg" type="button" data-day="1" aria-pressed="false">어제</button></div>
+        </div>
+        <div class="ui-card-body">
+          <p class="ui-small ui-sub ui-num stat-range" id="stat-range"></p>
+          <div class="ui-stats" id="stat-nums"></div>
+          <div id="stat-detail"><div class="ui-empty">불러오는 중…</div></div>
+          <div class="ui-info ui-info--in-card"><svg><use href="#i-info"/></svg><span>완료: 자막을 받아 저장함. 대기: 하루 · 실행 상한, 채널 몫이나 유튜브 쉼 때문에 다음 실행에서 받음 (묶음이 바뀔 때까지 못 받으면 건너뜀).</span></div>
+          <div class="ui-info ui-info--in-card"><svg><use href="#i-info"/></svg><span>한도는 묶음별로 따로 셉니다 (미국 · 한국 · 필수). 채널은 하루 몫(묶음 한도 ÷ 채널 수)까지만 받고, 묶음의 마지막 예약 40분 뒤부터 남은 한도를 대기 영상에 나눕니다. 한도는 받기 시도 수라 실패도 들어갑니다.</span></div>
+          <div class="ui-info ui-info--in-card"><svg><use href="#i-info"/></svg><span>건너뜀: 주제 무관 · 상한 기한 지남 · 자막 없고 너무 김 · 비공개라 받지 않음. 실패: 받기 오류로, 영상이 최신 목록에 남아 있으면 다음 실행에서 다시 시도 (5회까지).</span></div>
+        </div>
+      </section>
+      <section class="ui-dash-card ui-span-all">
+        <div class="ui-section-head">
+          <h2 class="ui-section-title"><span class="ui-tile ui-tile--orange" aria-hidden="true"><svg><use href="#i-user"/></svg></span>계정</h2>
+        </div>
+        <div class="ui-card-body">
+          <div class="ui-row rec-row">
+            <span class="ui-row-name">로그인<small id="user-email"></small></span>
+            <span class="ui-row-value"><button class="ui-btn-outline logout-btn" type="button">로그아웃</button></span>
+          </div>
+        </div>
+      </section>
+      <section class="ui-dash-card">
+        <div class="ui-section-head">
+          <h2 class="ui-section-title"><span class="ui-tile ui-tile--violet" aria-hidden="true"><svg><use href="#i-clock"/></svg></span>실행 기록</h2>
+          <span class="ui-note">최근 30회</span>
+        </div>
+        <div class="ui-card-body">
+          <div id="run-rows"><div class="ui-empty">불러오는 중…</div></div>
+          <button class="ui-fold-btn" type="button" id="run-fold" aria-expanded="false" hidden><span></span><svg class="ui-chev" width="16" height="16" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+      </section>
+      <section class="ui-dash-card">
+        <div class="ui-section-head">
+          <h2 class="ui-section-title"><span class="ui-tile" aria-hidden="true"><svg><use href="#i-list"/></svg></span>로그</h2>
+          <span class="ui-meta ui-num" id="log-meta"></span>
+        </div>
+        <div class="ui-card-body">
+          <div class="ui-segs log-segs" id="log-segs"><button class="ui-seg" type="button" data-filter="" aria-pressed="true">전체</button><button class="ui-seg" type="button" data-filter="error" aria-pressed="false">오류</button><button class="ui-seg" type="button" data-filter="skip" aria-pressed="false">건너뜀 · 대기</button></div>
+          <div class="log-lines" id="log-lines"><div class="ui-empty">실행 기록을 고르면 로그가 나옵니다.</div></div></div>
+      </section>
+      </div>
+    </div>
+  </main>
+
+  <!-- 텍스트 보기 -->
+  <dialog class="ui-dialog" id="text-dialog" aria-labelledby="text-title">
+    <div class="ui-pop-head"><div class="ui-pop-title" id="text-title"></div><button class="ui-pop-close" type="button" aria-label="닫기">×</button></div>
+    <!-- 열 때 닫기 버튼에 포커스 테두리가 생기지 않게 본문에 포커스를 준다 -->
+    <div class="ui-subtabs pop-tabs" role="tablist" id="text-tabs">
+      <button class="ui-subtab" type="button" role="tab" data-pane="summary" aria-selected="true">요약</button>
+      <button class="ui-subtab" type="button" role="tab" data-pane="text" aria-selected="false">자막</button>
+    </div>
+    <div class="ui-pop-body" tabindex="-1" autofocus><div class="summary" id="text-summary"></div><pre class="transcript" id="text-body"></pre></div>
+    <div class="pop-tools">
+      <button class="ui-icon-btn" type="button" id="text-copy" aria-label="복사" title="복사"><svg width="16" height="16" aria-hidden="true"><use href="#i-copy"/></svg></button>
+      <button class="ui-icon-btn" type="button" id="text-download" aria-label="다운로드" title="다운로드"><svg width="16" height="16" aria-hidden="true"><use href="#i-download"/></svg></button>
+    </div>
+  </dialog>
+
+  <!-- 확인 -->
+  <dialog class="ui-dialog" id="confirm-dialog" aria-labelledby="confirm-title">
+    <div class="ui-pop-head"><div class="ui-pop-title" id="confirm-title"></div><button class="ui-pop-close" type="button" aria-label="닫기">×</button></div>
+    <div class="ui-pop-body">
+      <p class="confirm-text" id="confirm-text"></p>
+      <div class="ui-pair"><button class="ui-btn-white" type="button" id="confirm-cancel">취소</button><button type="button" id="confirm-ok"></button></div>
+    </div>
+  </dialog>
+
+  <div class="ui-toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

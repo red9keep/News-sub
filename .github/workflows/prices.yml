@@ -1,0 +1,48 @@
+name: prices
+
+# 종목 의견(picks) 수익률 · 적중률 (worker/prices.py, 11-13). 유튜브 · VPN 요청 없음, 주가는 Yahoo Finance.
+# 미국 장 마감(21:00 UTC, 서머타임 끝나면 21:00 · 시작하면 20:00) 뒤 하루 1번. 한국 장은 그 전에 끝나 있다.
+# GitHub cron은 몇십 분 늦을 수 있지만 하루 1번 계산이라 상관없다
+on:
+  schedule:
+    - cron: "30 23 * * 1-5"   # 한국 시간 화 ~ 토 08:30 = 미국 월 ~ 금 장 마감 뒤
+  workflow_dispatch:
+
+concurrency:
+  group: prices
+  cancel-in-progress: false
+
+# 공개 저장소: 워크플로 토큰은 읽기만
+permissions:
+  contents: read
+
+jobs:
+  prices:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+
+      - name: 수익률 · 적중률 계산
+        run: |
+          pip install -r worker/requirements.txt
+          python worker/prices.py
+        env:
+          PYTHONUNBUFFERED: "1"
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: 실패 알림
+        if: failure()
+        run: |
+          [ -n "$SLACK_WEBHOOK_URL" ] || exit 0
+          curl -s -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\": \"[영상 수집기] 종목 수익률 계산 실패: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"unfurl_links\": false}" \
+            "$SLACK_WEBHOOK_URL" >/dev/null
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

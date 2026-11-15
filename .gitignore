@@ -1,0 +1,27 @@
+# 비밀값: 절대 커밋하지 않는다 (GitHub Secrets 사용)
+*-key.json
+*_key.json
+service-account*.json
+cookies.txt
+.env
+*.local
+
+# Firebase 배포 시 생성 (functions/.env는 deploy.yml이 만든다)
+functions/.env
+functions/venv/
+.firebase/
+firebase-debug*.log
+firestore-debug.log
+
+# 자막 시험 결과 (worker/trial.py)
+trial-out/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Cloudflare wrangler 로컬 상태
+.wrangler/
+node_modules/

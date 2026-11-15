@@ -1,0 +1,46 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "firestore.rules"
+      - "firestore.indexes.json"
+      - "storage.rules"
+      - "firebase.json"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+# 공개 저장소: 워크플로 토큰은 읽기만
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 소유자 UID를 보안 규칙에 넣기
+        run: |
+          if [ -z "${{ vars.OWNER_UID }}" ]; then
+            echo "::error::GitHub 변수 OWNER_UID가 비어 있습니다. 규칙이 모든 접근을 막게 되므로 배포를 중단합니다."
+            exit 1
+          fi
+          sed -i "s/__OWNER_UID__/${{ vars.OWNER_UID }}/g" firestore.rules storage.rules
+
+      # functions/(지금 수집 함수)는 권한이 많이 필요해 여기서 배포하지 않는다. README의 로컬 배포 절차 참고.
+      - name: 서비스 계정 키 파일 만들기
+        run: printf '%s' "$SA_JSON" > "$RUNNER_TEMP/sa.json"
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Firebase 배포
+        run: npx --yes firebase-tools@14 deploy --only hosting,firestore,storage --non-interactive
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json

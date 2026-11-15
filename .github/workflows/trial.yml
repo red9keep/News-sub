@@ -1,0 +1,250 @@
+name: trial
+
+# 수동 실행 전용 시험
+#   count     : 공식 API로 하루 새 영상 수만 센다 (VPN · 유튜브 페이지 요청 없음)
+#   vpn-only  : 집 공유기 VPN 접속과 집 IP 확인만 한다 (유튜브 요청 없음)
+#   captions  : VPN 경유로 최근 영상 자막을 받아 압축 파일(Artifacts)로 남긴다 (Firebase 불필요, 실행당 상한 10개). 키가 있으면 요약까지
+#   summarize : 이전 captions 실행의 자막 파일(run_id)을 요약만 한다 (VPN · 유튜브 요청 없음)
+#   llm-models: Gemini · NVIDIA Build API가 지금 제공하는 모델 ID 목록을 찍는다 (모델이 없어진 404 · 410 오류 대응)
+#   transcribe: videos 영상들을 models 모델마다 Gemini로 받아써 비교한다 (VPN · 유튜브 요청 없음)
+#   picks     : Firestore에 저장된 자막을 다시 요약해 종목 의견만 찍는다 (channels · hours 또는 videos). save면 picks만 저장
+# videos 입력을 주면 captions가 채널 목록 대신 그 영상들만 받는다 (요약 없음). player_client · player_skip은 yt-dlp 설정 시험용
+# provider 입력을 주면 그 실행만 해당 제공자(gemini · nvidia)로 요약 · 걸러내기를 한다. 비우면 변수 LLM_PROVIDER
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "시험 종류"
+        type: choice
+        options: [count, vpn-only, captions, summarize, llm-models, transcribe, picks, notify, channels, prices]
+        default: count
+      runner:
+        description: "러너 (VPN swanctl 시험용, 11-13). ubuntu-latest는 26.04"
+        type: choice
+        options: [ubuntu-24.04, ubuntu-latest]
+        default: ubuntu-24.04
+      hours:
+        description: "captions · picks: 최근 몇 시간 안의 영상"
+        default: "24"
+      run_id:
+        description: "summarize: 자막 파일을 가져올 captions 실행 번호"
+        default: ""
+      provider:
+        description: "요약 · 걸러내기 제공자 (gemini · nvidia). 비우면 변수 LLM_PROVIDER"
+        default: ""
+      model:
+        description: "summarize: 이 실행만 쓸 모델 ID (NVIDIA_MODEL · GEMINI_TEXT_MODEL 대신). 비우면 변수"
+        default: ""
+      max:
+        description: "summarize · picks: 요약할 자막 수 (비우면 전부 · picks는 20)"
+        default: ""
+      videos:
+        description: "captions · transcribe · picks: 쉼표로 구분한 영상 ID (captions는 주면 이 영상들만, 요약 없음)"
+        default: ""
+      channels:
+        description: "picks: 쉼표로 구분한 채널 이름 (일부만 써도 됨, 예: 당잠사). 비우면 모든 채널"
+        default: ""
+      save:
+        description: "picks: 뽑은 종목 의견을 Firestore에 저장 (지난 영상 채우기)"
+        type: boolean
+        default: false
+      models:
+        description: "transcribe: 쉼표로 구분한 받아쓰기 모델 ID. 비우면 변수 GEMINI_MODEL"
+        default: ""
+      split:
+        description: "transcribe: 나눠 받아쓰기 시험 'N,M' = M분 영상을 N분씩 (예: 10,44). 비우면 한 번에"
+        default: ""
+      language:
+        description: "captions: 채널 language처럼 자막 언어 지정 (예: ko). 비우면 영상 언어"
+        default: ""
+      player_client:
+        description: "captions: yt-dlp player_client (예: tv_samsung). 비우면 yt-dlp 기본"
+        default: ""
+      player_skip:
+        description: "captions: yt-dlp player_skip (예: webpage,configs,js). 비우면 없음"
+        default: ""
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+# summarize 모드가 다른 실행의 Artifacts를 내려받으려면 actions: read가 필요하다
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"  # 로그가 바로 보이게 (버퍼링되면 실행이 끊길 때 진행 상황이 사라진다)
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+  GEMINI_TEXT_MODEL: ${{ (inputs.provider == 'gemini' && inputs.model) || vars.GEMINI_TEXT_MODEL }}
+  NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+  NVIDIA_MODEL: ${{ (inputs.provider == 'nvidia' && inputs.model) || vars.NVIDIA_MODEL }}
+  LLM_PROVIDER: ${{ inputs.provider || vars.LLM_PROVIDER }}
+
+jobs:
+  trial:
+    # 기본 24.04. trial은 swanctl 판 vpn-up.sh라 26.04(ubuntu-latest)에서도 시험한다 (11-13)
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 집 공유기 VPN 연결
+        id: vpn
+        if: inputs.mode == 'vpn-only' || inputs.mode == 'captions'
+        # Ubuntu 26.04 sudo는 -E를 무시한다 (11-11부터 Secret이 빈 값으로 넘어가 VPN 실패). 필요한 변수만 직접 넘긴다
+        run: sudo env VPN_SERVER="$VPN_SERVER" VPN_PSK="$VPN_PSK" VPN_USER="$VPN_USER" VPN_PASSWORD="$VPN_PASSWORD" GITHUB_OUTPUT="$GITHUB_OUTPUT" bash scripts/vpn-up.sh
+        env:
+          VPN_SERVER: ${{ secrets.VPN_SERVER }}
+          VPN_PSK: ${{ secrets.VPN_PSK }}
+          VPN_USER: ${{ secrets.VPN_USER }}
+          VPN_PASSWORD: ${{ secrets.VPN_PASSWORD }}
+
+      - uses: actions/setup-python@v5
+        if: inputs.mode != 'vpn-only'
+        with:
+          python-version: "3.11"
+
+      - uses: denoland/setup-deno@v2
+        if: inputs.mode == 'captions'
+
+      - name: 자막 받기
+        if: inputs.mode == 'captions'
+        run: |
+          pip install -r worker/requirements.txt
+          pip install -U "yt-dlp[default]"
+          if [ -n "$VIDEOS" ]; then
+            python worker/trial.py --videos "$VIDEOS" --no-summarize ${LANGUAGE:+--language "$LANGUAGE"}
+          else
+            python worker/trial.py --hours "${{ inputs.hours }}"
+          fi
+        env:
+          CAPTIONS_MODE: home
+          YT_SOURCE_ADDRESS: ${{ steps.vpn.outputs.ip }}
+          VIDEOS: ${{ inputs.videos }}
+          LANGUAGE: ${{ inputs.language }}
+          YT_PLAYER_CLIENT: ${{ inputs.player_client }}
+          YT_PLAYER_SKIP: ${{ inputs.player_skip }}
+
+      - name: 받아쓰기 모델 비교
+        if: inputs.mode == 'transcribe'
+        run: |
+          pip install -r worker/requirements.txt
+          python worker/trial_transcribe.py --videos "$VIDEOS" ${MODELS:+--models "$MODELS"} ${SPLIT:+--split "$SPLIT"}
+        env:
+          VIDEOS: ${{ inputs.videos }}
+          MODELS: ${{ inputs.models }}
+          SPLIT: ${{ inputs.split }}
+
+      - name: 종목 의견 뽑기
+        if: inputs.mode == 'picks'
+        timeout-minutes: 40
+        run: |
+          pip install -r worker/requirements.txt
+          python worker/trial_picks.py --hours "${{ inputs.hours }}" ${VIDEOS:+--videos "$VIDEOS"} ${CHANNELS:+--channels "$CHANNELS"}             ${MAX:+--max "$MAX"} ${{ inputs.save && '--save' || '' }}
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          VIDEOS: ${{ inputs.videos }}
+          CHANNELS: ${{ inputs.channels }}
+          MAX: ${{ inputs.max }}
+
+      # channels 입력이 있으면 Data API로 채널 찾기, 없으면 add_channels.NEW 미리 보기 (save면 등록). 유튜브 페이지 요청 없음
+      - name: 채널 찾기 · 등록
+        if: inputs.mode == 'channels'
+        run: |
+          pip install -r worker/requirements.txt
+          if [ -n "$CHANNELS" ]; then python worker/add_channels.py --find "$CHANNELS"
+          else python worker/add_channels.py ${{ inputs.save && '--add' || '' }}; fi
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          CHANNELS: ${{ inputs.channels }}
+
+      # 종목 의견 수익률 · 적중률 계산 (prices.yml과 같은 것을 손으로). save를 끄면 Firestore에 쓰지 않고 찍기만
+      - name: 종목 의견 수익률
+        if: inputs.mode == 'prices'
+        run: |
+          pip install -r worker/requirements.txt
+          python worker/prices.py ${{ inputs.save && '' || '--dry-run' }} ${MAX:+--max "$MAX"}
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          MAX: ${{ inputs.max }}
+
+      # 가짜 실패 한 줄을 실제 Slack으로 보낸다 (주소는 비밀값 SLACK_WEBHOOK_URL)
+      - name: Slack 알림 시험
+        if: inputs.mode == 'notify'
+        working-directory: worker
+        run: |
+          pip install requests
+          python notify.py --test
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: 새 영상 수 세기
+        if: inputs.mode == 'count'
+        run: |
+          pip install -r worker/requirements.txt
+          python worker/count_new.py
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          MAX_CAPTIONS_PER_DAY: ${{ vars.MAX_CAPTIONS_PER_DAY }}
+
+      - name: 이전 captions 실행의 자막 파일 가져오기
+        if: inputs.mode == 'summarize'
+        uses: actions/download-artifact@v4
+        with:
+          name: trial-captions
+          path: trial-out
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Gemini · NVIDIA Build에서 쓸 수 있는 모델 목록
+        if: inputs.mode == 'llm-models'
+        run: |
+          echo "=== Gemini (generateContent 가능한 것) ==="
+          curl -sS "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200" -H "x-goog-api-key: $GEMINI_API_KEY" \
+            | python -c "import json,sys; ms=json.load(sys.stdin).get('models',[]); ids=sorted(m['name'].removeprefix('models/') for m in ms if 'generateContent' in m.get('supportedGenerationMethods',[])); print(len(ids),'개'); print('\n'.join(ids))"
+          echo "=== NVIDIA Build ==="
+          curl -sS https://integrate.api.nvidia.com/v1/models -H "Authorization: Bearer $NVIDIA_API_KEY" \
+            | python -c "import json,sys; ids=sorted(m['id'] for m in json.load(sys.stdin)['data']); print(len(ids),'개'); print('\n'.join(ids))"
+
+      - name: 자막 요약
+        if: inputs.mode == 'summarize'
+        timeout-minutes: 40
+        run: |
+          pip install -r worker/requirements.txt
+          python worker/summarize.py --dir trial-out ${{ inputs.max && format('--max {0}', inputs.max) || '' }}
+
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.mode == 'captions'
+        with:
+          name: trial-captions
+          path: trial-out/
+          retention-days: 1   # 공개 저장소라 결과 파일은 누구나 받을 수 있음 → 하루만 보관
+
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.mode == 'transcribe'
+        with:
+          name: trial-transcribe-${{ github.run_id }}
+          path: trial-out/transcribe/
+          retention-days: 1   # 공개 저장소라 결과 파일은 누구나 받을 수 있음 → 하루만 보관
+
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.mode == 'picks'
+        with:
+          name: trial-picks-${{ github.run_id }}
+          path: trial-out/picks/
+          retention-days: 1   # 공개 저장소라 결과 파일은 누구나 받을 수 있음 → 하루만 보관
+
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.mode == 'summarize'
+        with:
+          name: trial-summaries-${{ inputs.provider || 'default' }}-${{ github.run_id }}
+          path: trial-out/summaries.json
+          retention-days: 1   # 공개 저장소라 결과 파일은 누구나 받을 수 있음 → 하루만 보관
+
+      - name: VPN 끊기
+        if: always() && steps.vpn.outcome == 'success'
+        run: sudo bash scripts/vpn-down.sh
