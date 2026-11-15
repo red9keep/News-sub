@@ -25,3 +25,6 @@ venv/
 # Cloudflare wrangler 로컬 상태
 .wrangler/
 node_modules/
+
+# macOS 폴더 정보
+.DS_Store
