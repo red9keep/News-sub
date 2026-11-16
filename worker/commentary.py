@@ -158,13 +158,19 @@ def point_candidates(items, briefing, limit_topics=4):
         t, w = str(x.get("time") or "").strip(), str(x.get("what") or "").strip()
         if w:
             out.append(f"{t} — {w}" if t else w)
-    topics = Counter()
+    # 방송에서 많이 나온 주제: topic은 자유 문구라 잘 겹치지 않으므로, 겹치는 것이 없으면 큰 분류로 센다
+    topics, cats = Counter(), Counter()
     for s in items:
-        for t in {str(it.get("topic") or "").strip() for it in s.get("issues") or []} - {""}:
+        issues = s.get("issues") or []
+        for t in {str(it.get("topic") or "").strip() for it in issues} - {""}:
             topics[t] += 1
-    for t, n in topics.most_common(limit_topics):
-        if n >= 2:
-            out.append(f"방송 주제: {t} (영상 {n}개)")
+        for c in {it.get("category") for it in issues} - {None, "OTHER"}:
+            cats[c] += 1
+    top = [(t, n) for t, n in topics.most_common(limit_topics) if n >= 2]
+    if len(top) < 2:
+        from summarize import CATEGORIES
+        top += [(CATEGORIES.get(c, c).split(" (")[0], n) for c, n in cats.most_common(limit_topics - len(top)) if n >= 2]
+    out += [f"방송 주제: {t} (영상 {n}개)" for t, n in top]
     return out
 
 
@@ -222,6 +228,8 @@ JSON 객체 하나로만 답합니다:
 글쓰기 규칙:
 1. 재료에 없는 숫자 · 사건 · 종목은 쓰지 않는다.{numbers_rule}
 2. 전망 · 평가는 누가 말했는지 붙인다 ('톰 리(펀드스트랫)는 …라고 봤다'). 우리 판단처럼 쓰지 않는다.
+   말한 사람 없이 '~로 보인다 · ~할 전망이다 · 긍정적인 환경이다 · 매력적인 기회다' 같은 판단으로 문장을 끝내지 않는다.
+   이 시각은 '어떤 근거가 나왔고 누가 어떻게 봤는지'를 모은 것이다.
 3. 다음 말은 쓰지 않는다: 매수 · 매도(순매수 · 순매도 포함) · 과매수 · 과매도 · 추천 · 목표 진입 · 강세론 · 약세론.
    수급은 '외국인이 사들였다 · 팔았다'처럼 쓴다. 계산 신호는 '오름 쪽 · 내림 쪽 · 평소의 n배'처럼 사실의 말로 쓴다.
 4. 자막 문장을 그대로 옮기지 않는다. 바꿔 써서 요약한다.
@@ -298,7 +306,8 @@ def check(raw, items, known_tickers):
     m = FORBIDDEN.search(text)
     if m:
         raise ValueError(f"금지 표현 '{m.group()}'")
-    out["tickers"] = [t for t in (str(x).strip().upper() for x in raw.get("tickers") or []) if t in known_tickers]
+    out["tickers"] = [t for t in dict.fromkeys(str(x).strip().upper() for x in raw.get("tickers") or [])
+                      if t in known_tickers and mentioned(t, known_tickers[t], text)]
     srcs = []
     for x in raw.get("sources") or []:
         try:
@@ -312,18 +321,33 @@ def check(raw, items, known_tickers):
 
 
 def known_tickers(items, briefing):
-    out = set()
+    """재료에 나온 티커 → 알려진 종목 이름들 (picks · 묶음 movers에서). 이름을 모르면 빈 집합."""
+    out = {}
+
+    def add(t, name=""):
+        t = str(t or "").strip().upper()
+        if t:
+            out.setdefault(t, set())
+            if name:
+                out[t].add(" ".join(str(name).split()))
     for s in items:
-        out.update(str(t).upper() for t in s.get("tickers") or [])
+        for t in s.get("tickers") or []:
+            add(t)
         for it in s.get("issues") or []:
-            out.update(str(t).upper() for t in it.get("tickers") or [])
+            for t in it.get("tickers") or []:
+                add(t)
         for p in s.get("picks") or []:
-            if p.get("ticker"):
-                out.add(str(p["ticker"]).upper())
+            add(p.get("ticker"), p.get("name"))
     for m in ((briefing or {}).get("close") or {}).get("movers") or []:
-        if m.get("ticker"):
-            out.add(str(m["ticker"]).upper())
+        add(m.get("ticker"), m.get("name"))
     return out
+
+
+def mentioned(t, names, text):
+    """티커나 그 종목 이름이 글에 실제로 나왔는가 (AI가 본문에 없는 종목까지 tickers에 넣는다, 11-16 시험)."""
+    if re.search(rf"(?<![A-Z]){re.escape(t)}(?![A-Z])", text):
+        return True
+    return any(n and n in text for n in names)
 
 
 def write_view(prompt, items, tickers, log=print):
