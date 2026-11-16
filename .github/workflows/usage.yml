@@ -1,0 +1,40 @@
+name: usage
+
+# Storage 이번 달 요청 수 확인 (worker/usage.py, 11-16). 쓰기 4천 · 읽기 4만을 넘으면 Slack 알림 (한 달에 한 번).
+# 기준은 Variables STORAGE_WRITE_ALERT · STORAGE_READ_ALERT로 바꿀 수 있다
+on:
+  schedule:
+    - cron: "10 0 * * *"   # 매일 한국 시간 09:10
+  workflow_dispatch:
+
+concurrency:
+  group: usage
+  cancel-in-progress: false
+
+# 공개 저장소: 워크플로 토큰은 읽기만
+permissions:
+  contents: read
+
+jobs:
+  usage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+
+      - name: Storage 요청 수 확인
+        run: |
+          pip install -r worker/requirements.txt
+          python worker/usage.py
+        env:
+          PYTHONUNBUFFERED: "1"
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          STORAGE_WRITE_ALERT: ${{ vars.STORAGE_WRITE_ALERT }}
+          STORAGE_READ_ALERT: ${{ vars.STORAGE_READ_ALERT }}
