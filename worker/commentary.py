@@ -243,7 +243,7 @@ def center_event(items, briefing, market, log=None):
             x = max(xs, key=lambda x: abs(float(x["chg_pct"])))
             move += f" 묶음에서 가장 크게 움직인 {name}: {x.get('name')} {_pct(x['chg_pct'])}."
     return {
-        "category": cat, "label": label, "channels": len(b["channels"]),
+        "category": cat, "label": label, "channels": len(b["channels"]), "videos": sorted(b["videos"]),
         "text": (f"{label} — 채널 {len(b['channels'])}곳 · 영상 {', '.join(map(str, sorted(b['videos'])))}에서 다룸. "
                  f"주로 나온 주제: {', '.join(t for t, _ in b['topics'].most_common(3)) or '(없음)'}.{move}"),
     }
@@ -274,10 +274,12 @@ def point_candidates(items, briefing, next_market, limit_topics=4):
     return out
 
 
-def material_text(items):
-    """방송 요약을 번호 붙인 글로. 자막 원문 인용(picks.quote)은 넣지 않는다 (2-3절 4)."""
+def material_text(items, only=None):
+    """방송 요약을 번호 붙인 글로. 자막 원문 인용(picks.quote)은 넣지 않는다 (2-3절 4). only = 넣을 영상 번호 (번호는 그대로)"""
     blocks = []
     for n, s in enumerate(items, 1):
+        if only is not None and n not in only:
+            continue
         at = s.get("createdAt")
         at = at.astimezone(config.KST).strftime("%m-%d %H:%M") if hasattr(at, "astimezone") else ""
         lines = [f"[영상 {n}] {s.get('channelName', '')} · {s.get('titleKo') or s.get('title', '')} · 받은 시각 {at}",
@@ -454,7 +456,7 @@ def frame_prompt(ctx):
     if ctx.index_line:
         facts_rule = (f'"사실 2~3줄. 맨 앞 줄은 이미 있으니 쓰지 않는다: \'{ctx.index_line}\'. 그 뒤에 이어질 줄만"')
     else:
-        facts_rule = f'"사실 3~4줄. 첫 줄은 \'{ctx.label}\'로 시작한다 (예: \'{ctx.label}에서 …\')"'
+        facts_rule = '"사실 3~4줄. 장 날짜 · 장 이름은 쓰지 않는다 (첫 줄 앞에 따로 붙임)"'
     must = [n for n, c in enumerate(ctx.candidates, 1) if c["must"]]
     points_rule = ("후보에서만 0~3개 고른다. 후보가 없으면 빈 배열." if not must else
                    f"후보 {must[0]}번(장 시작 줄)은 늘 첫 줄로 따로 들어가니 고르지 않는다. 나머지 후보에서 0~2개 고른다.")
@@ -467,7 +469,13 @@ def frame_prompt(ctx):
 def view_prompt(ctx, d, side_videos, facts):
     idx = {s["id"]: n for n, s in enumerate(ctx.items, 1)}
     vids = ", ".join(str(idx[v]) for v in sorted(side_videos, key=lambda v: idx[v])) or "(없음, 데이터 근거만)"
-    return VIEW_PROMPT.format(**_common(ctx), side=DIR_KO[d], side_videos=vids,
+    common = _common(ctx)
+    if ctx.center:   # Q11: 중심 사건과 이어지지 않는 재료는 쓰지 않는다 → 시각 호출에는 중심 사건을 다룬 영상만 준다
+        only = set(ctx.center["videos"])
+        common["material"] = material_text(ctx.items, only)
+        common["n"] = f"전체 {len(ctx.items)}개 중 중심 사건을 다룬 {len(only)}"
+        vids = ", ".join(str(n) for n in sorted(only & {idx[v] for v in side_videos})) or "(중심 사건 영상에는 없음)"
+    return VIEW_PROMPT.format(**common, side=DIR_KO[d], side_videos=vids,
                               facts="\n".join(f"{n}. {f}" for n, f in enumerate(facts, 1)))
 
 
@@ -577,7 +585,8 @@ FORBIDDEN = re.compile(r"매수|매도|과매수|과매도|추천|목표 진입|
                        r"강세론|약세론|칼럼|bullish|bearish|"
                        r"투자\s*기회|매력적|담을\s*만|사\s*둘\s*만|놓치면\s*안|유망", re.I)
 # Q13: 인물 · 회사의 비위 · 사고 주장. 제목에는 금지, 본문은 채널 2곳 이상 또는 묶음 news에 있을 때만
-ALLEGATION = re.compile(r"스캔들|의혹|비리|비위|수사|사임|소송|분식|횡령|배임|기소|사기")
+ALLEGATION = re.compile(r"스캔들|의혹|비리|비위|수사|사임|소송|분식|횡령|배임|기소|사기|소환|조사에 착수|조사하")
+ATTRIBUTED = re.compile(r"(전했다|보도했다|밝혔다|말했다|지적했다|주장했다|발표했다|봤다)[.。]?$")
 # 말한 사람 없는 판단으로 끝나는 문장 (11-16 시험: '견고하다는 평가다' · '~로 전망된다')
 JUDGMENT_END = re.compile(r"(전망된다|전망이다|보인다|예상된다|평가다|평가된다|기대된다|관측된다|분석된다|풀이된다|"
                           r"여겨진다|판단된다|전망이 나온다)[.。]?$")
@@ -635,6 +644,8 @@ def sentence_problems(s, ctx, title):
             n = backing(s, w, ctx.channel_text.values())
             if n < 2 and backing(s, w, [ctx.news_text]) == 0:
                 out.append(f"'{w}' 주장은 서로 다른 채널 2곳 이상이 다룬 것만 쓴다 (재료에서 {n}곳)")
+            elif not ATTRIBUTED.search(s.strip()):
+                out.append(f"'{w}' 주장은 '~라고 ○○(채널 · 매체)가 전했다'로 쓴다")
     if not title and JUDGMENT_END.search(s.strip()):
         out.append("말한 사람 없는 판단으로 끝남")
     x = bad_number(s, ctx.numbers)
@@ -685,7 +696,8 @@ FIX_PROMPT = """아래 JSON은 시황 해설 원고입니다. 다음 문장에 �
   '추천 종목' → '꼽은 종목', '매력적인 투자 기회라고 봤다' → '○○는 지금 수준을 낮다고 봤다'처럼 숫자 · 사람으로)
 - 말한 사람 없는 판단: 원고 안에 그렇게 말한 사람 · 채널이 나와 있으면 '○○는 …라고 봤다'로 고치고, 없으면 그 문장을 뺀다
 - 재료에 없는 숫자: 그 숫자를 빼고 쓴다
-- 비위 · 사고 주장: 본문에서는 그 문장을 빼고, 제목에서는 그 말을 빼고 중립 구절로 쓴다
+- 비위 · 사고 주장: 채널 수가 모자라면 본문에서 그 문장을 빼고, '전했다'가 없으면 원고 안에 나온 채널 · 매체를 붙여
+  '~라고 ○○가 전했다'로 고친다 (원고에 출처가 없으면 그 문장을 뺀다). 제목에서는 그 말을 빼고 중립 구절로 쓴다
 걸린 문장만 고치고 나머지 문장과 칸은 그대로 두고, 같은 틀의 JSON 하나로만 답합니다. '-다'체를 지킨다.
 
 {draft}
@@ -784,7 +796,7 @@ def compose(day, slot, items, briefing, log=print):
         frame, m0 = ask("frame", frame_prompt(ctx), ctx, log)
         facts = ([ctx.index_line] if ctx.index_line else []) + frame["facts"]
         if not ctx.index_line and ctx.label not in facts[0]:
-            facts[0] = f"{ctx.label}: {facts[0]}"   # Q15: 첫 줄은 어느 장 이야기인지로 시작
+            facts[0] = f"{ctx.label}: {facts[0]}"   # Q15: 첫 줄은 어느 장 이야기인지로 시작 (파이썬이 붙임)
         views = []
         for d in dirs:
             v, m = ask("view", view_prompt(ctx, d, videos[d], facts), ctx, log)
