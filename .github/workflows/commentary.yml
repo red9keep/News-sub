@@ -72,5 +72,5 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
-          # 다 쓴 글의 status. 비우면 draft-test (블로그가 발행하지 않는 시험 글). 시험 3일 뒤 ready로 바꾼다
+          # 다 쓴 글의 status. 비우면 draft-test (블로그가 발행하지 않는 시험 글). ready로 바꾸는 것은 사용자가 글을 보고 정한다
           COMMENTARY_STATUS: ${{ vars.COMMENTARY_STATUS }}
