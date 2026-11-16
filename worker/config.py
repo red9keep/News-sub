@@ -49,7 +49,8 @@ BLOCK_COOLDOWN_HOURS = (2, 6, 24)    # 막힌 횟수(연속)별 쉬는 시간. �
 MAX_CAPTIONS_PER_RUN = int(os.environ.get("MAX_CAPTIONS_PER_RUN") or 10)  # 실행 한 번에
 MAX_CAPTIONS_PER_DAY = int(os.environ.get("MAX_CAPTIONS_PER_DAY") or 60)  # 묶음 하루에, 기본 묶음(미국 채널)
 # 채널 limitGroup별 하루 상한 (10-25: 한국 채널을 미국 채널 60개와 따로 센다). limitGroup이 없는 채널은 위 기본 묶음
-GROUP_DAY_LIMITS = {"kr": int(os.environ.get("MAX_CAPTIONS_PER_DAY_KR") or 20)}
+# 한국 20 → 30 (11-16, 한국 채널 13개로 늘어 하루 약 17 ~ 18개 예상)
+GROUP_DAY_LIMITS = {"kr": int(os.environ.get("MAX_CAPTIONS_PER_DAY_KR") or 30)}
 # 채널별 하루 몫 (10-27): 한 채널이 묶음 상한을 몰아 쓰지 않게, 묶음 상한 ÷ 묶음 안 채널 수(올림)까지만 받는다.
 # 채널 문서 dayMax(숫자)가 있으면 그 값. 묶음의 마지막 예약 시각에서 이만큼(분) 지나면 몫을 풀어 남은 상한을 대기 영상에 준다
 SHARE_RELEASE_AFTER_MIN = 40
