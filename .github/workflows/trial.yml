@@ -78,6 +78,7 @@ env:
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
   GEMINI_TEXT_MODEL: ${{ (inputs.provider == 'gemini' && inputs.model) || vars.GEMINI_TEXT_MODEL }}
+  GEMINI_TEXT_FALLBACK: ${{ vars.GEMINI_TEXT_FALLBACK }}
   NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
   NVIDIA_MODEL: ${{ (inputs.provider == 'nvidia' && inputs.model) || vars.NVIDIA_MODEL }}
   LLM_PROVIDER: ${{ inputs.provider || vars.LLM_PROVIDER }}

@@ -107,6 +107,7 @@ jobs:
           STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           GEMINI_TEXT_MODEL: ${{ vars.GEMINI_TEXT_MODEL }}
+          GEMINI_TEXT_FALLBACK: ${{ vars.GEMINI_TEXT_FALLBACK }}
           MAX_DURATION_MIN: ${{ vars.MAX_DURATION_MIN }}
           CAPTIONS_MODE: ${{ vars.CAPTIONS_MODE }}
           MAX_CAPTIONS_PER_RUN: ${{ vars.MAX_CAPTIONS_PER_RUN }}

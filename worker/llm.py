@@ -71,12 +71,29 @@ class _Timeout(Exception):
     """응답이 너무 늦다. 짧게 쉬고 TIMEOUT_ATTEMPTS번까지만 다시."""
 
 
-def _call_gemini(prompt):
+def gemini_models():
+    """요약 · 걸러내기에 차례로 쓸 Gemini 모델: 첫 모델 + 예비(GEMINI_TEXT_FALLBACK, "off"면 없음)."""
+    models = [config.GEMINI_TEXT_MODEL]
+    fb = (config.GEMINI_TEXT_FALLBACK or "").strip()
+    if fb and fb.lower() != "off" and fb not in models:
+        models.append(fb)
+    return models
+
+
+def last_model():
+    """마지막으로 JSON을 받아 온 모델 ("gemini:모델" · "nvidia:모델"). 저장 때 어느 모델 결과인지 남긴다."""
+    return _last_model or f"{config.LLM_PROVIDER}:{config.NVIDIA_MODEL if config.LLM_PROVIDER == 'nvidia' else config.GEMINI_TEXT_MODEL}"
+
+
+_last_model = ""
+
+
+def _call_gemini(prompt, model):
     from google.genai import errors, types
     from transcribe import _get_client
     try:
         resp = _get_client().models.generate_content(
-            model=config.GEMINI_TEXT_MODEL, contents=prompt,
+            model=model, contents=prompt,
             config=types.GenerateContentConfig(temperature=0, response_mime_type="application/json"),
         )
     except errors.APIError as e:
@@ -141,14 +158,37 @@ def _call_nvidia(prompt, log=print):
     return "".join(parts)
 
 
+class _Switch(Exception):
+    """이 모델은 그만 쓰고 예비 모델로 넘어간다."""
+
+
 def generate_json(prompt, log=print, what=""):
-    """prompt → 파싱된 JSON. 실패하면 LLMError."""
+    """prompt → 파싱된 JSON. 실패하면 LLMError.
+
+    Gemini는 첫 모델이 404(모델 없음) · 429(하루 한도) · 5xx 두 번이면 예비 모델(GEMINI_TEXT_FALLBACK)로 넘어간다."""
+    global _last_model
     if config.LLM_PROVIDER == "nvidia":
-        call = lambda p: _call_nvidia(p, log=log)
-    else:
-        call = _call_gemini
-    if config.LLM_PROVIDER != "nvidia" and not config.GEMINI_API_KEY:
+        _last_model = ""
+        data = _generate_with(lambda p: _call_nvidia(p, log=log), prompt, log, what, has_next=False)
+        _last_model = f"nvidia:{config.NVIDIA_MODEL}"
+        return data
+    if not config.GEMINI_API_KEY:
         raise LLMError("GEMINI_API_KEY 없음")
+    models = gemini_models()
+    for i, model in enumerate(models):
+        has_next = i + 1 < len(models)
+        try:
+            data = _generate_with(lambda p, m=model: _call_gemini(p, m), prompt, log, what, has_next)
+        except _Switch as e:
+            log(f"{model} 실패 ({e}) → 예비 모델 {models[i + 1]}로 다시 ({what})")
+            continue
+        _last_model = f"gemini:{model}"
+        return data
+    raise LLMError("모든 모델 실패")  # _Switch는 다음 모델이 있을 때만 나므로 여기 오지 않는다
+
+
+def _generate_with(call, prompt, log, what, has_next):
+    """한 모델로 재시도하며 JSON을 받는다. has_next면 404 · 429 · 5xx 두 번째에 _Switch."""
     last = None
     timeouts = 0
     for attempt in range(1, ATTEMPTS + 1):
@@ -157,6 +197,8 @@ def generate_json(prompt, log=print, what=""):
             return _extract_json(call(prompt))
         except _Retry as e:
             last = e
+            if has_next and (e.code in (404, 429) or (e.code in (500, 502, 503, 504) and attempt >= 2)):
+                raise _Switch(reasons.explain(e)) from e
             if attempt == ATTEMPTS:
                 break
             if e.code == 429:

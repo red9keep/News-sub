@@ -28,6 +28,9 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash"  # 받아쓰
 # 요약 · 주제 걸러내기(텍스트만) 모델. 비우면 GEMINI_MODEL과 같다.
 # 10-21 시험: gemini-3.8-flash는 무료 한도(하루)가 금방 차고 503이 잦았다. gemini-3.5-flash-lite는 10개를 1분에 모두 성공
 GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL") or GEMINI_MODEL
+# 요약 · 걸러내기 예비 모델 (11-16). 첫 모델이 404 · 429(하루 한도) · 계속된 5xx로 실패하면 이 모델로 한 번 더.
+# gemini-3.1-flash-lite는 3.5 lite와 하루 한도를 따로 세고 품질이 같은 급 (블로그 비교, doc/블로그-AI-모델-안내.md). "off"면 예비 없음
+GEMINI_TEXT_FALLBACK = os.environ.get("GEMINI_TEXT_FALLBACK") or "gemini-3.1-flash-lite"
 MAX_DURATION_MIN = int(os.environ.get("MAX_DURATION_MIN") or 60)  # Gemini가 한 번에 받아쓰는 길이. 넘으면 나눠 받는다
 SEGMENT_MIN = 30      # 나눠 받아쓸 때 한 구간 길이 (10-29)
 MAX_LONG_MIN = 180    # 자막 없는 영상을 나눠서라도 받아쓰는 최대 길이. 넘으면 건너뜀 (30분 6번 = Gemini 6회)

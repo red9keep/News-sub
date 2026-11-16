@@ -9,6 +9,7 @@ from firebase_admin import credentials, firestore, storage
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 import config
+import llm
 import summarize
 
 _db = None
@@ -174,7 +175,7 @@ def save_summary(video_id, data, meta):
     day = {"date": now.strftime("%Y-%m-%d"), "edition": config.edition_day(now)}
     _db.collection("summaries").document(video_id).set({
         **meta, **data, **day,
-        "model": f"{config.LLM_PROVIDER}:{config.NVIDIA_MODEL if config.LLM_PROVIDER == 'nvidia' else config.GEMINI_TEXT_MODEL}",
+        "model": llm.last_model(),  # 예비 모델로 받았으면 그 이름 (11-16)
         "createdAt": firestore.SERVER_TIMESTAMP,
     })
     save_picks(video_id, data.get("picks") or [], {**meta, **day, "titleKo": data.get("titleKo", "")})

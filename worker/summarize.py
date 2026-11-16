@@ -506,8 +506,7 @@ def main():
     with open(os.path.join(args.dir, "summaries.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
     ok = sum(1 for o in out if "error" not in o)
-    model = config.NVIDIA_MODEL if llm.provider() == "nvidia" else config.GEMINI_TEXT_MODEL
-    print(f"\n요약 {ok}/{len(out)}개 성공 ({llm.provider()} · {model}) → {os.path.join(args.dir, 'summaries.json')}")
+    print(f"\n요약 {ok}/{len(out)}개 성공 (마지막 모델 {llm.last_model()}) → {os.path.join(args.dir, 'summaries.json')}")
 
 
 if __name__ == "__main__":
