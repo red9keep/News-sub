@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 import captions
 import config
+import feed
 import store
 import reasons
 import summarize
@@ -699,3 +700,6 @@ if __name__ == "__main__":
         if not notify.crash_sent:
             notify.crashed(reasons.explain(e))
         raise
+    finally:
+        # 이번 실행에서 쓰거나 고친 요약의 묶음을 Storage 파일로 발행 (블로그가 읽음, 11-16). 실패해도 실행은 그대로
+        feed.publish_touched()

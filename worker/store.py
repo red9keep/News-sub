@@ -13,6 +13,9 @@ import llm
 import summarize
 
 _db = None
+# 이번 실행에서 쓰거나 고친 요약 (feed.publish_touched가 그 묶음 파일만 다시 발행한다)
+touched_editions = set()   # save_summary: 묶음 날짜를 안다
+touched_videos = set()     # set_summary_fields: 묶음 날짜를 모른다 (발행 때 문서에서 본다)
 
 
 def init():
@@ -178,6 +181,7 @@ def save_summary(video_id, data, meta):
         "model": llm.last_model(),  # 예비 모델로 받았으면 그 이름 (11-16)
         "createdAt": firestore.SERVER_TIMESTAMP,
     })
+    touched_editions.add(day["edition"])
     save_picks(video_id, data.get("picks") or [], {**meta, **day, "titleKo": data.get("titleKo", "")})
 
 
@@ -216,6 +220,7 @@ def summaries_without_title_ko(scan=300):
 
 def set_summary_fields(video_id, **fields):
     _db.collection("summaries").document(video_id).update(fields)
+    touched_videos.add(video_id)
 
 
 def pending_summary_ids(limit):

@@ -106,6 +106,9 @@ def main():
     total = sum(len(o.get("picks", [])) for o in out)
     before = sum(o.get("before", 0) for o in out)
     print(f"\n영상 {len(out)}개, 종목 의견 {total}건 (저장된 것 {before}건){' (저장함)' if args.save else ''} → {args.out}")
+    if args.save:
+        import feed
+        feed.publish_touched()  # 고친 요약의 묶음 파일도 다시 발행 (블로그가 읽음)
 
 
 if __name__ == "__main__":

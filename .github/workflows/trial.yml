@@ -16,7 +16,7 @@ on:
       mode:
         description: "시험 종류"
         type: choice
-        options: [count, vpn-only, captions, summarize, llm-models, transcribe, picks, notify, channels, prices]
+        options: [count, vpn-only, captions, summarize, llm-models, transcribe, picks, notify, channels, prices, feed]
         default: count
       runner:
         description: "러너 (VPN swanctl 시험용, 11-13). ubuntu-latest는 26.04"
@@ -36,7 +36,7 @@ on:
         description: "summarize: 이 실행만 쓸 모델 ID (NVIDIA_MODEL · GEMINI_TEXT_MODEL 대신). 비우면 변수"
         default: ""
       max:
-        description: "summarize · picks: 요약할 자막 수 (비우면 전부 · picks는 20)"
+        description: "summarize · picks: 요약할 자막 수 (비우면 전부 · picks는 20). feed: 며칠치 발행 (비우면 35)"
         default: ""
       videos:
         description: "captions · transcribe · picks: 쉼표로 구분한 영상 ID (captions는 주면 이 영상들만, 요약 없음)"
@@ -170,6 +170,17 @@ jobs:
           python worker/prices.py ${{ inputs.save && '' || '--dry-run' }} ${MAX:+--max "$MAX"}
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          MAX: ${{ inputs.max }}
+
+      # 요약을 묶음 날짜별 파일로 Storage feed/에 다시 발행 (블로그가 읽음, 11-16). 수집은 실행마다 바뀐 날짜만 자동으로 발행한다
+      - name: 요약 파일 발행
+        if: inputs.mode == 'feed'
+        run: |
+          pip install -r worker/requirements.txt
+          python worker/feed.py --days "${MAX:-35}"
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
           MAX: ${{ inputs.max }}
 
       # 가짜 실패 한 줄을 실제 Slack으로 보낸다 (주소는 비밀값 SLACK_WEBHOOK_URL)
