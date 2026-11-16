@@ -199,9 +199,11 @@ def counted_issues(items, market):
     return out
 
 
-def center_event(items, briefing, market):
-    """그날의 중심 사건 (Q11): 건수에 드는 이슈 중 가장 많은 채널이 다룬 큰 분류. 같으면 이슈 수.
+def center_event(items, briefing, market, log=None):
+    """그날의 중심 사건 (Q11): 건수에 드는 이슈 중 가장 많은 채널이 방향(오름 · 내림)을 붙여 다룬 큰 분류.
 
+    같으면 그 분류를 다룬 채널 수 → 이슈 수. 방향 없는 이슈만 많은 분류(11-16 시험: 빅테크 CEO 스파이 위협)가
+    그날 시장을 움직인 사건(반도체 급락)보다 앞서지 않게 방향 있는 채널을 먼저 본다.
     topic은 자유 문구라 잘 겹치지 않아 큰 분류로 고르고, 그 안에서 많이 나온 topic을 같이 준다."""
     from summarize import CATEGORIES
     by = {}
@@ -209,8 +211,10 @@ def center_event(items, briefing, market):
         c = it.get("category")
         if not c or c == "OTHER":
             continue
-        b = by.setdefault(c, {"channels": set(), "issues": 0, "videos": set(), "topics": Counter()})
+        b = by.setdefault(c, {"channels": set(), "moved": set(), "issues": 0, "videos": set(), "topics": Counter()})
         b["channels"].add(ch)
+        if it.get("stance") in ("bullish", "bearish"):
+            b["moved"].add(ch)
         b["issues"] += 1
         b["videos"].add(n)
         t = str(it.get("topic") or "").strip()
@@ -218,7 +222,11 @@ def center_event(items, briefing, market):
             b["topics"][t] += 1
     if not by:
         return None
-    cat, b = max(by.items(), key=lambda kv: (len(kv[1]["channels"]), kv[1]["issues"]))
+    ranked = sorted(by.items(), key=lambda kv: (len(kv[1]["moved"]), len(kv[1]["channels"]), kv[1]["issues"]), reverse=True)
+    if log:
+        log("중심 사건 후보: " + " · ".join(f"{c} 방향 {len(b['moved'])}/채널 {len(b['channels'])}/이슈 {b['issues']}"
+                                         for c, b in ranked[:5]))
+    cat, b = ranked[0]
     label = CATEGORIES.get(cat, cat).split(" (")[0]
     move = ""
     close = (briefing or {}).get("close") or {}
@@ -292,7 +300,7 @@ def material_text(items):
 # ---------- 재료 묶음 (프롬프트 · 검사에 같이 씀) ----------
 
 class Ctx:
-    def __init__(self, day, slot, items, briefing):
+    def __init__(self, day, slot, items, briefing, log=None):
         import summarize
         self.day, self.slot, self.items, self.briefing = day, slot, items, briefing
         self.market, self.next = SLOTS[slot]["market"], SLOTS[slot]["next"]
@@ -301,7 +309,7 @@ class Ctx:
                               if briefing else "")
         self.label = session_label(day, slot, briefing)
         self.index_line = index_line(session_label(day, slot, briefing, plain=True), briefing)
-        self.center = center_event(items, briefing, self.market)
+        self.center = center_event(items, briefing, self.market, log)
         self.candidates = point_candidates(items, briefing, self.next)
         self.tickers = known_tickers(items, briefing)
         # 숫자 대조: 방송 요약 + 묶음 숫자 (묶음 숫자는 % · 그냥 수 둘 다로) + 지수 이름 숫자
@@ -335,7 +343,7 @@ RULES = """글쓰기 규칙:
 1. 재료에 없는 숫자 · 사건 · 종목은 쓰지 않는다.{numbers_rule}
 2. 전망 · 평가는 누가 말했는지 붙인다 ('톰 리(펀드스트랫)는 …라고 봤다'). 우리 판단처럼 쓰지 않는다.
    말한 사람 없이 '~로 보인다 · ~로 전망된다 · ~라는 평가다 · ~가 기대된다'로 문장을 끝내지 않는다.
-   말한 사람이 있는 평가도 좋다 · 나쁘다 · 매력적이다 같은 값 매김은 옮기지 않고 숫자 + 사람으로 쓴다
+   말한 사람이 있는 평가도 좋다 · 나쁘다 · 매력적이다 · '긍정적으로 평가했다' 같은 값 매김은 옮기지 않고 무엇을 근거로 어떻게 봤는지를 숫자 + 사람으로 쓴다
    ('○○는 수익률 6%대를 높은 수준이라고 봤다').
 3. 다음 말은 쓰지 않는다: 매수 · 매도(순매수 · 순매도 포함) · 과매수 · 과매도 · 추천 · 목표 진입 · 강세론 · 약세론 ·
    투자 기회 · 매력적 · 담을 만 · 사 둘 만 · 놓치면 안 · 유망.
@@ -401,7 +409,7 @@ VIEW_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 �
 JSON 객체 하나로만 답합니다:
 {{
   "heading": "{side} 쪽 시각의 제목. 이유와 방향을 함께 말한다 (예: 'AI 투자, 실적이 받쳐 준다', '금리 부담에 비싸진 주가'). 25자 안",
-  "claim": "주장 한 문장. 중심 사건을 {side} 쪽에서 본 것",
+  "claim": "주장 한 문장. 중심 사건을 {side} 쪽에서 본 것. 우리 판단이 아니라 시각임이 드러나게 끝낸다 (예: '…라고 보는 쪽이다', '…라는 시각이다')",
   "evidence": ["근거 2~3개, 한 문장씩. 근거마다 말한 사람이나 채널을 붙인다 (예: 'CNBC에서 ○○는 …라고 봤다')"],
   "risk": "이 시각이 틀리는 조건 한 문장, 사실로 쓴다 (예: '다음 주 엔비디아 실적에서 데이터센터 매출이 줄면 이 시각은 힘을 잃는다')",
   "facts_used": [위 공통 사실 가운데 이 시각의 근거와 이어지는 번호],
@@ -584,6 +592,28 @@ def bad_number(text, have):
     return None
 
 
+PARTICLE = re.compile(r"(에서|으로|에게|까지|부터|이라는|라는|이다|의|은|는|이|가|을|를|과|와|에|로|도|만)$")
+COMMON = {"관련", "대한", "통해", "따라", "있다", "했다", "전했다", "보도", "주장", "가능성", "우려", "논란", "대상", "최근"}
+
+
+def backing(sent, word, texts):
+    """비위 주장 sent를 뒷받침하는 글 수: word와 sent의 고유 낱말 2개 이상이 한 문장에 같이 나온 글.
+
+    낱말만 세면 '의혹'이 다른 일로 두 채널에 나와도 통과한다 (11-16 시험: 엔비디아 칩 유출 의혹)."""
+    keys = set()
+    for t in re.findall(r"[가-힣A-Za-z][가-힣A-Za-z0-9&]+", sent):
+        t = PARTICLE.sub("", t)
+        if len(t) >= 2 and t not in COMMON and not ALLEGATION.fullmatch(t):
+            keys.add(t)
+    n = 0
+    for text in texts:
+        for x in re.split(r"(?<=[.!?。])\s+|\\n|\n|\", \"", text):
+            if word in x and sum(1 for k in keys if k in x) >= 2:
+                n += 1
+                break
+    return n
+
+
 def sentence_problems(s, ctx, title):
     out = []
     m = FORBIDDEN.search(s)
@@ -595,8 +625,8 @@ def sentence_problems(s, ctx, title):
         if title:
             out.append(f"제목에 '{w}' 같은 말을 넣지 않는다")
         else:
-            n = sum(1 for t in ctx.channel_text.values() if w in t)
-            if n < 2 and w not in ctx.news_text:
+            n = backing(s, w, ctx.channel_text.values())
+            if n < 2 and backing(s, w, [ctx.news_text]) == 0:
                 out.append(f"'{w}' 주장은 서로 다른 채널 2곳 이상이 다룬 것만 쓴다 (재료에서 {n}곳)")
     if not title and JUDGMENT_END.search(s.strip()):
         out.append("말한 사람 없는 판단으로 끝남")
@@ -739,7 +769,7 @@ def compose(day, slot, items, briefing, log=print):
     base = {"counts": counts, "briefing": f"{day}-{slot}" if briefing else None}
     if not dirs:
         raise Skip("재료 부족", base)
-    ctx = Ctx(day, slot, items, briefing)
+    ctx = Ctx(day, slot, items, briefing, log)
     log(f"장: {ctx.label} · 중심 사건: {ctx.center['text'] if ctx.center else '없음'}")
     base["center"] = {"category": ctx.center["category"], "label": ctx.center["label"],
                       "channels": ctx.center["channels"]} if ctx.center else None
