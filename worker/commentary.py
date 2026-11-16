@@ -153,11 +153,11 @@ def missing_line(d, c, pool):
 
 def point_candidates(items, briefing, limit_topics=4):
     """관전 포인트 후보: 묶음 next_session 일정 + 방송에서 많이 나온 주제 (2-2절). AI는 이 중에서만 고른다."""
-    out = []
+    out = []   # [{"text": 후보 글, "time": 시각 또는 ""}]
     for x in ((briefing or {}).get("next_session") or {}).get("items") or []:
         t, w = str(x.get("time") or "").strip(), str(x.get("what") or "").strip()
         if w:
-            out.append(f"{t} — {w}" if t else w)
+            out.append({"text": f"{t} {w}" if t else w, "time": t})
     # 방송에서 많이 나온 주제: topic은 자유 문구라 잘 겹치지 않으므로, 겹치는 것이 없으면 큰 분류로 센다
     topics, cats = Counter(), Counter()
     for s in items:
@@ -170,7 +170,7 @@ def point_candidates(items, briefing, limit_topics=4):
     if len(top) < 2:
         from summarize import CATEGORIES
         top += [(CATEGORIES.get(c, c).split(" (")[0], n) for c, n in cats.most_common(limit_topics - len(top)) if n >= 2]
-    out += [f"방송 주제: {t} (영상 {n}개)" for t, n in top]
+    out += [{"text": f"방송에서 많이 다룬 주제: {t} (영상 {n}개)", "time": ""} for t, n in top]
     return out
 
 
@@ -216,11 +216,12 @@ PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 해설
 JSON 객체 하나로만 답합니다:
 {{
   "title_topic": "글 제목 뒤쪽. 그날 일어난 일을 중립으로 한 구절 (20자 안팎). 예: '금리 인하 기대 꺾인 하루'. 방향을 편들지 않는다",
-  "summary": "검색 설명용 한 문장, 한글 45자 안",
-  "facts": ["오늘 시장에서 있었던 일, 공통 사실 3~4줄. 한 줄 한 문장. 숫자는 글 전체에서 두세 개만"],
+  "summary": "검색 설명용 한 문장, 한글 45자 안. 그날 일어난 일만 중립으로 (오름 · 내림 어느 쪽 시각도 편들지 않음)",
+  "facts": ["오늘 시장에서 있었던 일, 공통 사실 3~4줄. 한 줄 한 문장. 숫자는 글 전체에서 두세 개만. 해석 없이 사실만"],
   "heading": "{side_ko} 쪽 시각의 제목. 이유와 방향을 함께 말한다 (예: 'AI 투자, 실적이 받쳐 준다', '금리 부담에 비싸진 주가'). 25자 안",
   "body": "{side_ko} 쪽 시각 한 단락, 4~7문장. 근거와 해석",
-  "points": ["관전 포인트. 아래 후보에서만 골라 0~3줄. 한 줄에 하나, 40자 안. 시각이 있으면 맨 앞 'HH:MM — 내용'"],
+  "points": [{{"pick": 아래 관전 포인트 후보 번호, "text": "그 후보를 독자 말로 다듬은 한 줄, 30자 안. 시각은 쓰지 않는다(따로 붙임). 예측 · 판단 없이 사실만"}}],
+            (후보에서만 0~3개. 후보가 없으면 빈 배열),
   "tickers": ["본문 · 사실에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
   "sources": [본문 · 사실의 근거로 쓴 영상 번호 (숫자). 방송에서 가져온 숫자가 있으면 그 영상은 꼭 넣는다]
 }}
@@ -235,7 +236,7 @@ JSON 객체 하나로만 답합니다:
 4. 자막 문장을 그대로 옮기지 않는다. 바꿔 써서 요약한다.
 5. 독자 말을 쓴다. 분류 코드(RATES_FED 등) · scope · stance · bullish · bearish · edition · D+20 · A/B · 유보 같은 내부 말은 쓰지 않는다.
 6. 종목 이름은 한글(엔비디아 · 삼성전자), 숫자는 '2.04%' · '13억 달러' 식.
-7. 분량: 공통 사실 3~4줄, 본문 한 단락 4~7문장.
+7. 분량: 공통 사실 3~4줄, 본문 한 단락 4~7문장. 문장은 모두 '-다'로 끝낸다 ('-습니다' 쓰지 않음).
 8. '테스트 중' 같은 표시를 넣지 않는다. 설명이나 머리말 없이 JSON만 출력한다.
 
 관전 포인트 후보 ({points_title}):
@@ -266,7 +267,7 @@ def build_prompt(day, slot, d, items, briefing, candidates, side_videos):
     return PROMPT.format(
         when=f"{day} {'아침' if slot == 'am' else '저녁'} 편", what=what, side_ko=DIR_KO[d], side_videos=vids,
         numbers_rule=numbers_rule, points_title=points_title(day, slot),
-        candidates="\n".join(f"- {c}" for c in candidates) or "(없음 → points는 빈 배열)",
+        candidates="\n".join(f"{n}. {c['text']}" for n, c in enumerate(candidates, 1)) or "(없음 → points는 빈 배열)",
         briefing=b, n=len(items), span=f"{start:%m-%d %H:%M} ~ {end:%m-%d %H:%M} KST 받음",
         material=material_text(items))
 
@@ -282,7 +283,28 @@ def _cut_bytes(s, n):
     return s if len(b) <= n else b[:n].decode("utf-8", "ignore").rstrip() + "…"
 
 
-def check(raw, items, known_tickers):
+def pick_points(raw, candidates):
+    """AI가 고른 후보 번호 → 관전 포인트 줄. 후보에 없는 것은 버리고, 시각은 후보의 것을 앞에 붙인다 (40자 안)."""
+    out, seen = [], set()
+    for p in raw if isinstance(raw, list) else []:
+        if not isinstance(p, dict):
+            continue
+        try:
+            n = int(p.get("pick"))
+        except (TypeError, ValueError):
+            continue
+        text = _clean(p.get("text"))
+        if not (1 <= n <= len(candidates)) or n in seen or not text:
+            continue
+        seen.add(n)
+        t = candidates[n - 1]["time"]
+        line = f"{t} — {text}" if t else text
+        if len(line) <= 45:
+            out.append(line)
+    return out[:3]
+
+
+def check(raw, items, known_tickers, candidates=()):
     """모델 답 → 다듬은 dict. 틀이 어긋나거나 금지 표현이 있으면 ValueError (예비 모델로 다시)."""
     if not isinstance(raw, dict):
         raise ValueError("JSON 객체가 아님")
@@ -292,7 +314,7 @@ def check(raw, items, known_tickers):
         "facts": [_clean(x) for x in raw.get("facts") or [] if _clean(x)][:4],
         "heading": _clean(raw.get("heading")).strip("'\"")[:40],
         "body": _clean(raw.get("body")),
-        "points": [_clean(x) for x in raw.get("points") or [] if _clean(x)][:3],
+        "points": pick_points(raw.get("points"), list(candidates)),
     }
     for k in ("title_topic", "summary", "heading", "body"):
         if not out[k]:
@@ -301,8 +323,7 @@ def check(raw, items, known_tickers):
         raise ValueError("facts 비어 있음")
     if not 80 <= len(out["body"]) <= 1200:
         raise ValueError(f"본문 길이 {len(out['body'])}자")
-    out["points"] = [p for p in out["points"] if len(p) <= 45]
-    text = " ".join([out["title_topic"], out["summary"], out["heading"], out["body"], *out["facts"], *out["points"]])
+    text =" ".join([out["title_topic"], out["summary"], out["heading"], out["body"], *out["facts"], *out["points"]])
     m = FORBIDDEN.search(text)
     if m:
         raise ValueError(f"금지 표현 '{m.group()}'")
@@ -350,14 +371,14 @@ def mentioned(t, names, text):
     return any(n and n in text for n in names)
 
 
-def write_view(prompt, items, tickers, log=print):
+def write_view(prompt, items, tickers, candidates, log=print):
     """한 시각을 쓴다. 첫 모델이 실패하거나 틀이 어긋나면 예비 모델로 한 번 더. 둘 다 안 되면 Skip."""
     last = None
     for model in MODELS:
         config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = model, "off"
         try:
             raw = llm.generate_json(prompt, log=log, what=f"시황 해설 {model}")
-            return check(raw, items, tickers), f"gemini:{model}"
+            return check(raw, items, tickers, candidates), f"gemini:{model}"
         except llm.LLMError as e:
             last = f"호출 실패 ({e})"
         except ValueError as e:
@@ -385,7 +406,7 @@ def compose(day, slot, items, briefing, log=print):
     tickers = known_tickers(items, briefing)
     views, first, models, sources, used = [], None, [], [], []
     for d in dirs:   # 두 시각은 따로 호출. 같은 후보를 주고, 관전 포인트 · 제목 · 사실은 첫 호출 것만 쓴다
-        r, model = write_view(build_prompt(day, slot, d, items, briefing, cands, videos[d]), items, tickers, log)
+        r, model = write_view(build_prompt(day, slot, d, items, briefing, cands, videos[d]), items, tickers, cands, log)
         first = first or r
         models.append(model)
         views.append({"dir": d, "heading": r["heading"], "body": r["body"]})
