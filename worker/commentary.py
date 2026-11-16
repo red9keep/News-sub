@@ -371,14 +371,32 @@ def mentioned(t, names, text):
     return any(n and n in text for n in names)
 
 
+FIX_PROMPT = """아래 JSON은 시황 해설 원고입니다. 글 안에 쓰면 안 되는 말 '{word}'이(가) 들어 있습니다.
+그 말이 든 문장만, 그 말(과 매수 · 매도 · 순매수 · 순매도 · 과매수 · 과매도 · 추천 · 강세론 · 약세론)을 쓰지 않고 같은 뜻으로 고쳐 씁니다
+(예: '외국인이 순매도했다' → '외국인이 주식을 팔았다', '매도 의견' → '낮춰 잡은 의견', '추천 종목' → '꼽은 종목').
+나머지 문장과 칸은 그대로 두고, 같은 틀의 JSON 하나로만 답합니다.
+
+{draft}
+"""
+
+
 def write_view(prompt, items, tickers, candidates, log=print):
-    """한 시각을 쓴다. 첫 모델이 실패하거나 틀이 어긋나면 예비 모델로 한 번 더. 둘 다 안 되면 Skip."""
+    """한 시각을 쓴다. 금지 표현이면 그 문장만 고쳐 쓰게 한 번 더, 실패하거나 틀이 어긋나면 예비 모델로. 다 안 되면 Skip."""
     last = None
     for model in MODELS:
         config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = model, "off"
         try:
             raw = llm.generate_json(prompt, log=log, what=f"시황 해설 {model}")
-            return check(raw, items, tickers, candidates), f"gemini:{model}"
+            try:
+                return check(raw, items, tickers, candidates), f"gemini:{model}"
+            except ValueError as e:
+                m = re.search(r"금지 표현 '(.+?)'", str(e))
+                if not m:
+                    raise
+                log(f"  {model}: {e} → 그 문장만 고쳐 쓰게 함")
+                raw = llm.generate_json(FIX_PROMPT.format(word=m.group(1), draft=json.dumps(raw, ensure_ascii=False)),
+                                        log=log, what=f"시황 해설 고쳐 쓰기 {model}")
+                return check(raw, items, tickers, candidates), f"gemini:{model}"
         except llm.LLMError as e:
             last = f"호출 실패 ({e})"
         except ValueError as e:
@@ -406,7 +424,10 @@ def compose(day, slot, items, briefing, log=print):
     tickers = known_tickers(items, briefing)
     views, first, models, sources, used = [], None, [], [], []
     for d in dirs:   # 두 시각은 따로 호출. 같은 후보를 주고, 관전 포인트 · 제목 · 사실은 첫 호출 것만 쓴다
-        r, model = write_view(build_prompt(day, slot, d, items, briefing, cands, videos[d]), items, tickers, cands, log)
+        try:
+            r, model = write_view(build_prompt(day, slot, d, items, briefing, cands, videos[d]), items, tickers, cands, log)
+        except Skip as e:   # 한쪽만 실수로 나가지 않게 그 편 전체 skip. 센 건수는 남긴다
+            raise Skip(e.args[0], base) from e
         first = first or r
         models.append(model)
         views.append({"dir": d, "heading": r["heading"], "body": r["body"]})
