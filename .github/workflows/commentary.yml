@@ -1,13 +1,12 @@
 name: commentary
 
 # 알파스코프 시황 해설 (worker/commentary.py, News-doc 요청-알파스코프-시황-해설.md)
-# 정시 실행은 cron-trigger(Cloudflare Worker)가 08:10 (am) · 20:30 (pm) KST에 workflow_dispatch(scheduled=true)로 건다.
-# 아래 schedule은 Worker가 빠졌을 때의 예비. 이미 그 편이 있으면 바로 끝나고, 마감(08:30 · 20:40)을 넘겼으면 skip 문서만 남긴다
+# 11-16 사용자 결정: 품질을 확인할 때까지 자동 실행 멈춤. 지금은 손으로만 돌린다 (dry로 시험 글 보기).
+# 다시 켤 때: ① cron-trigger/src/index.js COMMENTARY에 08:10 am · 20:30 pm 되살리고 wrangler deploy
+#             ② 아래 schedule 예비 cron 되살림 ("14 23 * * *" = 08:14 KST am, "33 11 * * *" = 20:33 KST pm)
+#   이미 그 편이 있으면 바로 끝나고, 마감(08:30 · 20:40)을 넘겼으면 skip 문서만 남긴다
 # 유튜브 요청 · VPN이 없어 수집(collect)과 따로 돈다 (Q1: 같은 줄에 서지 않게)
 on:
-  schedule:
-    - cron: "14 23 * * *"   # 08:14 KST (am)
-    - cron: "33 11 * * *"   # 20:33 KST (pm)
   workflow_dispatch:
     inputs:
       slot:
