@@ -199,33 +199,40 @@ def counted_issues(items, market):
     return out
 
 
+def add_center(by, c, n, ch, it):
+    b = by.setdefault(c, {"channels": set(), "moved": set(), "issues": 0, "videos": set(), "topics": Counter()})
+    b["channels"].add(ch)
+    if it.get("stance") in ("bullish", "bearish"):
+        b["moved"].add(ch)
+    b["issues"] += 1
+    b["videos"].add(n)
+    t = str(it.get("topic") or "").strip()
+    if t:
+        b["topics"][t] += 1
+
+
 def center_event(items, briefing, market, log=None):
-    """그날의 중심 사건 (Q11): 건수에 드는 이슈 중 가장 많은 채널이 방향(오름 · 내림)을 붙여 다룬 큰 분류.
+    """그날의 중심 사건 (Q11): 해설 시장(또는 나라 없음) 이슈 중 가장 많은 채널이 방향(오름 · 내림)을 붙여 다룬 큰 분류.
 
     같으면 그 분류를 다룬 채널 수 → 이슈 수. 방향 없는 이슈만 많은 분류(11-16 시험: 빅테크 CEO 스파이 위협)가
     그날 시장을 움직인 사건(반도체 급락)보다 앞서지 않게 방향 있는 채널을 먼저 본다.
     topic은 자유 문구라 잘 겹치지 않아 큰 분류로 고르고, 그 안에서 많이 나온 topic을 같이 준다."""
     from summarize import CATEGORIES
     by = {}
-    for n, ch, it in counted_issues(items, market):
-        c = it.get("category")
-        if not c or c == "OTHER":
-            continue
-        b = by.setdefault(c, {"channels": set(), "moved": set(), "issues": 0, "videos": set(), "topics": Counter()})
-        b["channels"].add(ch)
-        if it.get("stance") in ("bullish", "bearish"):
-            b["moved"].add(ch)
-        b["issues"] += 1
-        b["videos"].add(n)
-        t = str(it.get("topic") or "").strip()
-        if t:
-            b["topics"][t] += 1
+    for n, s in enumerate(items, 1):   # 종목 범위도 넣는다 (11-16: 반도체 급락이 엔비디아 종목 이슈로만 적힘)
+        ch = s.get("channelName") or s.get("channelId") or "?"
+        for it in s.get("issues") or []:
+            c, country = it.get("category"), (it.get("country") or "").upper()
+            if not c or c == "OTHER" or (country and country != market):
+                continue
+            add_center(by, c, n, ch, it)
     if not by:
         return None
     ranked = sorted(by.items(), key=lambda kv: (len(kv[1]["moved"]), len(kv[1]["channels"]), kv[1]["issues"]), reverse=True)
     if log:
-        log("중심 사건 후보: " + " · ".join(f"{c} 방향 {len(b['moved'])}/채널 {len(b['channels'])}/이슈 {b['issues']}"
-                                         for c, b in ranked[:5]))
+        for c, b in ranked[:5]:
+            log(f"  중심 사건 후보 {c}: 방향 채널 {len(b['moved'])} · 채널 {len(b['channels'])} · 이슈 {b['issues']} — "
+                + ", ".join(t for t, _ in b["topics"].most_common(4)))
     cat, b = ranked[0]
     label = CATEGORIES.get(cat, cat).split(" (")[0]
     move = ""
