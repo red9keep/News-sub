@@ -49,3 +49,5 @@ GitHub Actions 예약 실행(cron)은 정시를 보장하지 않는다. 2026-10-
 ## 시각을 바꿀 때
 
 함께 맞춘다: ① `src/index.js`의 `SLOTS` (base = 채널 예약 시각) ② `collect.yml`의 예비 cron ③ Firestore 채널 `times`. 바꾼 뒤 `npx wrangler deploy`.
+
+시황 해설(`commentary.yml`, 11-16)은 `src/index.js`의 `COMMENTARY`에서 정시(08:10 am · 20:30 pm KST)에 건다. 시각을 바꾸면 `commentary.yml`의 예비 cron과 `worker/commentary.py`의 마감(`SLOTS`)도 같이 본다. 바꾼 뒤 `npx wrangler deploy`.

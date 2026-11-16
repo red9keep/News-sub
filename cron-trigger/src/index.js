@@ -24,6 +24,13 @@ const SLOTS = [
   })),
 ];
 
+// 시황 해설 (commentary.yml, 11-16). 유튜브에 접속하지 않으므로 시각을 흩지 않고 정시에 건다.
+//   am 08:10 (마감 08:30, 당잠사 07:35 회차 요약 뒤) · pm 20:30 (마감 20:40)
+const COMMENTARY = [
+  { at: 8 * 60 + 10, slot: "am" },
+  { at: 20 * 60 + 30, slot: "pm" },
+];
+
 // 문자열 → [0, 1) 고른 값 (FNV-1a + 섞기). 같은 문자열이면 늘 같은 값
 function rand(key) {
   let h = 0x811c9dc5;
@@ -61,8 +68,16 @@ function hhmm(min) {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
-async function dispatch(token) {
-  const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
+// 지금이 시황 해설을 걸 분이면 그 편 ("am" · "pm"), 아니면 null
+export function commentaryDue(date) {
+  const now = Math.floor((date.getTime() + 9 * 3600 * 1000) / 60000);
+  const m = ((now % DAY_MIN) + DAY_MIN) % DAY_MIN;
+  const hit = COMMENTARY.find((c) => c.at === m);
+  return hit ? hit.slot : null;
+}
+
+async function dispatch(token, workflow = WORKFLOW, inputs = { scheduled: "true" }) {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${workflow}/dispatches`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -70,16 +85,27 @@ async function dispatch(token) {
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "yutb-collect-trigger",
     },
-    body: JSON.stringify({ ref: "main", inputs: { scheduled: "true" } }),
+    body: JSON.stringify({ ref: "main", inputs }),
   });
-  if (res.status !== 204) throw new Error(`${WORKFLOW}: HTTP ${res.status} ${await res.text()}`);
+  if (res.status !== 204) throw new Error(`${workflow}: HTTP ${res.status} ${await res.text()}`);
 }
 
 export default {
   async scheduled(event, env) {
     const date = new Date(event.scheduledTime);
+    const at = hhmm(Math.floor(date.getTime() / 60000) + 9 * 60);
+    const slot = commentaryDue(date);
+    if (slot) {
+      // 실패해도 같은 분의 수집 실행은 건다 (오류는 로그에만)
+      try {
+        await dispatch(env.GITHUB_TOKEN, "commentary.yml", { scheduled: "true", slot });
+        console.log(`dispatched commentary.yml (${slot}) at KST ${at}`);
+      } catch (e) {
+        console.error(String(e));
+      }
+    }
     if (!due(date)) return;
     await dispatch(env.GITHUB_TOKEN); // 실패하면 예외가 Cloudflare 로그(Cron Events)에 남는다
-    console.log(`dispatched ${WORKFLOW} at KST ${hhmm(Math.floor(date.getTime() / 60000) + 9 * 60)}`);
+    console.log(`dispatched ${WORKFLOW} at KST ${at}`);
   },
 };

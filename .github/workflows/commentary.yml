@@ -1,0 +1,76 @@
+name: commentary
+
+# 알파스코프 시황 해설 (worker/commentary.py, News-doc 요청-알파스코프-시황-해설.md)
+# 정시 실행은 cron-trigger(Cloudflare Worker)가 08:10 (am) · 20:30 (pm) KST에 workflow_dispatch(scheduled=true)로 건다.
+# 아래 schedule은 Worker가 빠졌을 때의 예비. 이미 그 편이 있으면 바로 끝나고, 마감(08:30 · 20:40)을 넘겼으면 skip 문서만 남긴다
+# 유튜브 요청 · VPN이 없어 수집(collect)과 따로 돈다 (Q1: 같은 줄에 서지 않게)
+on:
+  schedule:
+    - cron: "14 23 * * *"   # 08:14 KST (am)
+    - cron: "33 11 * * *"   # 20:33 KST (pm)
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "편: am · pm · auto (낮 12시 전이면 am)"
+        type: choice
+        options: [auto, am, pm]
+        default: auto
+      date:
+        description: "편 날짜 YYYY-MM-DD (비우면 오늘 KST)"
+        type: string
+        default: ""
+      force:
+        description: "마감 · 이미 있음 무시하고 다시 쓰기 (rev 올림, 옛 내용은 columns_history)"
+        type: boolean
+        default: false
+      dry:
+        description: "저장하지 않고 결과만 로그에 출력"
+        type: boolean
+        default: false
+      scheduled:
+        description: "바깥 예약기용 (사람은 끄고 쓴다)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: commentary
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  write:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+
+      - run: pip install firebase-admin google-genai requests
+
+      - name: 시황 해설 쓰기
+        working-directory: worker
+        run: |
+          args="--slot ${SLOT:-auto}"
+          [ -n "$DAY" ] && args="$args --date $DAY"
+          [ "$FORCE" = "true" ] && args="$args --force"
+          [ "$DRY" = "true" ] && args="$args --dry"
+          echo "python commentary.py $args"
+          python commentary.py $args
+        env:
+          PYTHONUNBUFFERED: "1"
+          SLOT: ${{ inputs.slot }}
+          DAY: ${{ inputs.date }}
+          FORCE: ${{ inputs.force }}
+          DRY: ${{ inputs.dry }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
+          # 다 쓴 글의 status. 비우면 draft-test (블로그가 발행하지 않는 시험 글). 시험 3일 뒤 ready로 바꾼다
+          COMMENTARY_STATUS: ${{ vars.COMMENTARY_STATUS }}
