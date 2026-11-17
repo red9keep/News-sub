@@ -1275,17 +1275,18 @@ STORY_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 
 오늘의 중심 사건: {center}
 
 독자는 이 글 하나로 '장이 왜 그렇게 움직였고, 다음 장에서 무엇을 봐야 하는지'를 알고 싶어 합니다.
-발언 모음이 아니라 한 편의 시황 기사로 씁니다. 먼저 재료에서 장을 움직인 변수 2~3개를 고르고, 그 변수들이 어떻게 이어지는지 정한 뒤 씁니다.
+발언 모음이 아니라 한 편의 시황 기사로 씁니다. 먼저 아래 '변수 후보'에서 변수를 고르고, 그 변수들이 어떻게 이어지는지 정한 뒤 씁니다.
 
 JSON 객체 하나로만 답합니다:
 {{
   "title": "제목. 무슨 일로 장이 어떻게 됐는지가 드러나게 (30자 안팎). 예: '금리 인하 기대 꺾이며 기술주 약세, 나스닥 1.2% 내려'",
   "summary": "검색 설명용 한 문장, 45자 안",
-  "overview": "한눈에 보기. 3~4문장 한 문단. 지수가 어떻게 끝났고, 무엇이 장을 움직였고, 그 흐름이 다음 장에 어떻게 이어지는지",
+  "overview": "한눈에 보기. {overview_len} 한 문단. 지수가 어떻게 끝났고, 무엇이 장을 움직였고, 그 흐름이 다음 장에 어떻게 이어지는지",
   "market": "지수 · 업종 흐름. 3~4문장 한 문단. {market_rule}",
   "drivers": [
-    {{"heading": "변수 이름 (15자 안. 예: '실적 발표를 앞둔 경계')",
-      "body": "4~6문장 한 문단. 무슨 일이 있었나 → 왜 시장에 중요한가 → 이 변수를 낙관하는 쪽과 걱정하는 쪽이 각각 무엇을 근거로 드는가(말한 사람을 붙여서. 한쪽만 있으면 한쪽만) → 마지막 문장은 전망이 아니라 사실로 끝낸다: 이 변수와 바로 이어지는 일정이 일정 표나 재료에 있으면 그것을, 없으면 지금 상태를 쓴다. 관계가 먼 일정을 억지로 붙이지 않는다"}}
+    {{"cand": 변수 후보 번호 (숫자),
+      "heading": "변수 이름 (15자 안. 예: '실적 발표를 앞둔 경계')",
+      "body": "한 문단 (길이는 아래 drivers 규칙). 무슨 일이 있었나 → 왜 시장에 중요한가 → 이 변수를 낙관하는 쪽과 걱정하는 쪽이 각각 무엇을 근거로 드는가(말한 사람을 붙여서. 한쪽만 있으면 한쪽만) → 마지막 문장은 전망이 아니라 사실로 끝낸다: 이 변수와 바로 이어지는 일정이 일정 표나 재료에 있으면 그것을, 없으면 지금 상태를 쓴다. 관계가 먼 일정을 억지로 붙이지 않는다"}}
   ],
   "sectors": [{{"name": "업종 이름 (블로그 데이터 close.sectors에 적힌 그대로)", "check": "다음 장에서 볼 것 한 구절 (20자 안)"}}],
   "checks": ["다음 장에서 확인할 것 1~2줄. 아래 후보와 일정 표에서 고른다. 각 줄은 '무엇 — 왜 보는지'를 명사로 끝나는 한 구절로 (예: '엔비디아 실적 — 데이터센터 매출이 예상을 넘는지'). 40자 안"],
@@ -1294,11 +1295,16 @@ JSON 객체 하나로만 답합니다:
   "sources": [근거로 쓴 영상 번호 (숫자)]
 }}
 
-drivers는 2~3개, 중요한 순서로. 변수끼리 내용이 겹치지 않게 한다. 장과 이어지지 않는 개별 소식은 변수로 삼지 않는다.
-sectors는 3~5개, 블로그 데이터에 있는 업종만 (업종 데이터가 없으면 빈 배열). 등락 숫자는 따로 붙이니 쓰지 않는다.
+drivers: 변수는 아래 '변수 후보'에서만 고르고 후보 번호를 cand에 적는다. 번호가 앞선 후보부터 쓰고, 1번 후보는 꼭 다룬다.
+한 후보에 여러 주제가 묶여 있으면 그 가운데 장과 가장 가까운 이야기를 중심으로 쓴다. 변수끼리 내용이 겹치지 않게 한다.
+{drivers_rule}
+sectors: {sectors_rule}
 checks: {checks_rule}
 
 {rules}
+
+변수 후보 (파이썬이 점수 순으로 매김: 다룬 채널 · 영상 수 + 그날 실제로 움직인 종목 · 업종과의 연결):
+{driver_cands}
 
 다음 장에서 확인할 것 후보 ({points_title}):
 {candidates}
@@ -1352,17 +1358,150 @@ POLITE_END = re.compile(r"니다[.。]?$")
 STORY_PARAS = ("overview", "market", "one_line")
 
 
+# 변수 후보 순위 · 그날 글의 무게 (11-17 사용자: 무엇이 중요한지는 AI가 아니라 파이썬이 먼저 정한다)
+MACRO = {"RATES_FED", "INFLATION", "GROWTH_JOBS", "TARIFF_TRADE", "GEOPOLITICS", "FISCAL_POLITICS", "MARKET_STRUCTURE",
+         "FX_GLOBAL"}
+
+
+# 닻으로 삼기에는 너무 넓은 낱말
+ANCHOR_STOP = {"AI", "미국", "중국", "한국", "글로벌", "리스크", "영향", "강화", "확대", "변화", "사태", "문제", "이슈", "관련주",
+               "기업", "산업", "업종", "종목", "정부", "경제", "정책", "예정", "임박", "지속", "심화", "둔화", "부각"}
+
+
+def driver_candidates(items, briefing, market, log=None, limit=6):
+    """장을 움직인 변수 후보를 점수 순으로. AI는 이 안에서만 변수를 고른다.
+
+    방송 이슈의 주제(topic, 자유 문구)를 겹치는 낱말로 묶고, 묶음마다
+    점수 = 다룬 채널 수 ×3 + 방향(오름 · 내림)을 붙인 채널 수 + 영상 수(10까지) + 시장 연결(그날 크게 움직인 종목 · 업종 · 지수).
+    '많이 말한 것'만이 아니라 '시장에서 실제로 움직인 것과 이어진 것'이 앞에 오게 한다."""
+    close = (briefing or {}).get("close") or {}
+    movers = [m for m in close.get("movers") or [] if _pct(m.get("chg_pct"))]
+    sectors = [x for x in close.get("sectors") or [] if _pct(x.get("chg_pct"))]
+    idx = max((abs(float(x["chg_pct"])) for x in close.get("indices") or [] if _pct(x.get("chg_pct"))), default=0)
+    # 주제(topic)는 자유 문구라 글자로는 잘 안 겹친다 → 여러 영상에 나온 낱말(엔비디아 · 앤트로픽 · 연준)을 닻으로 삼아 묶는다
+    rows = []   # (영상 번호, 채널, 이슈, 낱말들)
+    for n, v in enumerate(items, 1):
+        ch = v.get("channelName") or v.get("channelId") or "?"
+        for it in v.get("issues") or []:
+            cat, country = it.get("category"), (it.get("country") or "").upper()
+            ks = keys_of(str(it.get("topic") or "")) - ANCHOR_STOP
+            if cat and cat != "OTHER" and not (country and country != market) and ks:
+                rows.append((n, ch, it, ks))
+    df = Counter(k for n, k in {(n, k) for n, _, _, ks in rows for k in ks})   # 낱말 → 나온 영상 수
+    anchors = {k for k, c in df.items() if c >= 2}
+    group = {k: k for k in anchors}   # 늘 같이 나오는 닻(연준 · 금리)은 하나로
+
+    def root(k):
+        while group[k] != k:
+            k = group[k]
+        return k
+    count = Counter(k for _, _, _, ks in rows for k in ks & anchors)
+    both = Counter((a, b) for _, _, _, ks in rows for a in ks & anchors for b in ks & anchors if a < b)
+    for (a, b), c in both.items():
+        if c / min(count[a], count[b]) >= 0.6:
+            group[root(b)] = root(a)
+    by = {}
+    for n, ch, it, ks in rows:
+        mine = ks & anchors
+        if not mine:
+            continue
+        k = root(max(mine, key=lambda k: (df[k], k)))
+        c = by.setdefault(k, {"keys": Counter(), "topics": Counter(), "channels": set(), "moved": set(), "videos": set(),
+                              "tickers": set(), "cats": Counter()})
+        c["keys"].update(ks)
+        c["topics"][str(it.get("topic")).strip()] += 1
+        c["channels"].add(ch)
+        c["videos"].add(n)
+        c["cats"][it.get("category")] += 1
+        c["tickers"] |= {str(t).strip().upper() for t in it.get("tickers") or []}
+        if it.get("stance") in ("bullish", "bearish"):
+            c["moved"].add(ch)
+    clusters = list(by.values())
+    out = []
+    for c in clusters:
+        if len(c["channels"]) < 2 and len(c["videos"]) < 2:
+            continue
+        keys, bonus, link = set(c["keys"]), 0.0, []
+        hit = [m for m in movers if str(m.get("ticker") or "").upper() in c["tickers"] or m.get("name") in keys]
+        if hit:
+            m = max(hit, key=lambda m: abs(float(m["chg_pct"])))
+            bonus += min(abs(float(m["chg_pct"])), 4)
+            link.append(f"{m.get('name')} {_pct(m['chg_pct'])}")
+        hit = [x for x in sectors if x.get("name") in keys]
+        if hit:
+            x = max(hit, key=lambda x: abs(float(x["chg_pct"])))
+            bonus += min(abs(float(x["chg_pct"])), 3)
+            link.append(f"{x.get('name')} 업종 {_pct(x['chg_pct'])}")
+        if not link and idx >= 1 and c["cats"].most_common(1)[0][0] in MACRO:
+            bonus += 2
+            link.append("지수 전체가 1% 넘게 움직인 날의 거시 변수")
+        score = 3 * len(c["channels"]) + len(c["moved"]) + min(len(c["videos"]), 10) + bonus
+        tops = [t for t, _ in c["topics"].most_common(3)]
+        out.append({"score": round(score, 1), "topic": tops[0], "more": tops[1:], "channels": len(c["channels"]),
+                    "videos": sorted(c["videos"]), "link": " · ".join(link)})
+    out.sort(key=lambda c: c["score"], reverse=True)
+    out = out[:limit]
+    for n, c in enumerate(out, 1):
+        c["text"] = (f"{n}. {c['topic']}" + (f" (같이 나온 주제: {', '.join(c['more'])})" if c["more"] else "")
+                     + f" — 채널 {c['channels']}곳 · 영상 {len(c['videos'])}개 (영상 {', '.join(map(str, c['videos'][:12]))})"
+                     + (f" · 시장 연결: {c['link']}" if c["link"] else " · 시장 연결: 없음"))
+        if log:
+            log(f"  변수 후보 {c['text']} [점수 {c['score']}]")
+    return out
+
+
+def day_shape(briefing, cands, log=None):
+    """그날 글의 무게: 큰 사건 하나가 압도한 날 · 조용한 날 · 보통 날. 업종 표는 업종 사이 차이가 클 때만."""
+    close = (briefing or {}).get("close") or {}
+    idx = [abs(float(x["chg_pct"])) for x in close.get("indices") or [] if _pct(x.get("chg_pct"))]
+    sec = [float(x["chg_pct"]) for x in close.get("sectors") or [] if _pct(x.get("chg_pct"))]
+    big, spread = (max(idx) if idx else None), (max(sec) - min(sec) if sec else 0)
+    lead = cands[0]["score"] / cands[1]["score"] if len(cands) > 1 and cands[1]["score"] else (9 if cands else 0)
+    if lead >= 1.6 and (big is None or big >= 1):
+        mode = "focus"
+        rule = ("오늘은 후보 1번이 다른 후보를 크게 앞선 날이다. drivers 첫 문단은 후보 1번을 6~8문장으로 깊게 쓴다 "
+                "(배경 → 무슨 일 → 왜 중요한가 → 양쪽 시각 → 다음에 확인될 사실). 꼭 필요하면 다른 후보 하나를 3~4문장으로 덧붙인다. drivers는 1~2개.")
+        lo, hi, ov = 1, 2, "3~4문장"
+    elif big is not None and big < 0.4 and spread < 1.5:
+        mode = "quiet"
+        rule = ("오늘은 지수 · 업종이 거의 움직이지 않은 조용한 날이다. 억지로 큰 사건처럼 쓰지 않는다. "
+                "drivers는 1~2개, 문단마다 3~4문장으로 짧게 쓴다.")
+        lo, hi, ov = 1, 2, "2~3문장"
+    else:
+        mode = "normal"
+        rule = "drivers는 2~3개, 문단마다 4~6문장. 점수 차이가 큰 후보를 억지로 채우지 않는다 (2개면 충분하면 2개)."
+        lo, hi, ov = 2, 3, "3~4문장"
+    table = spread >= 2.0
+    if log:
+        log(f"글의 무게: {mode} (지수 최대 {big if big is not None else '모름'}% · 업종 차이 {spread:.2f}%p · "
+            f"1번/2번 후보 점수 {lead:.2f}배) · 업종 표 {'넣음' if table else '안 넣음'}")
+    return {"mode": mode, "rule": rule, "min": lo, "max": hi, "overview": ov, "table": table}
+
+
 def story_out(raw, ctx):
     """AI 답을 다듬는다. 업종 등락은 묶음 숫자로 붙이고, 장 시작 줄과 겹치는 확인 줄은 뺀다."""
     from difflib import SequenceMatcher
     if not isinstance(raw, dict):
         raise ValueError("JSON 객체 아님")
     out = {k: plain(_clean(raw.get(k))) for k in ("title", "summary", *STORY_PARAS)}
-    out["drivers"] = [{"heading": plain(_clean(d.get("heading"))), "body": plain(_clean(d.get("body")))}
-                      for d in raw.get("drivers") or [] if isinstance(d, dict) and _clean(d.get("body"))][:3]
+    ds = [{"heading": plain(_clean(d.get("heading"))), "body": plain(_clean(d.get("body"))),
+           "cand": (_ints([d.get("cand")]) or [0])[0]}
+          for d in raw.get("drivers") or [] if isinstance(d, dict) and _clean(d.get("body"))]
+    n = len(ctx.driver_cands)
+    ok = [d for d in ds if 1 <= d["cand"] <= n]
+    if ok:   # 후보 밖에서 고른 변수는 빼고, 같은 후보는 하나만, 순위대로 놓는다 (글마다 변수 · 순서가 흔들리지 않게)
+        seen, ds = set(), []
+        for d in sorted(ok, key=lambda d: d["cand"]):
+            if d["cand"] not in seen:
+                seen.add(d["cand"])
+                ds.append(d)
+    out["drivers"] = ds[:ctx.shape["max"]]
+    out["min_drivers"] = ctx.shape["min"]
     moves = {x.get("name"): _pct(x.get("chg_pct")) for x in ((ctx.briefing or {}).get("close") or {}).get("sectors") or []}
     out["sectors"] = [{"name": _clean(x.get("name")), "move": moves[_clean(x.get("name"))], "check": plain(_clean(x.get("check")))}
                       for x in raw.get("sectors") or [] if isinstance(x, dict) and moves.get(_clean(x.get("name")))][:5]
+    if not ctx.shape["table"]:
+        out["sectors"] = []
     must = [c for c in ctx.candidates if c["must"]]
     first = [f"{c['time']} — {c['what']}" if c.get("time") and c.get("what") else c["text"] for c in must]
     checks = []
@@ -1379,8 +1518,8 @@ def story_ok(out):
     if not out["title"] or len(sentences(out["overview"])) < 2 or not out["one_line"]:
         raise ValueError("제목 · 한눈에 보기 · 핵심 한 줄이 모자람")
     out["drivers"] = [d for d in out["drivers"] if d["heading"] and len(sentences(d["body"])) >= 3]
-    if len(out["drivers"]) < 2:
-        raise ValueError("변수 문단이 2개가 안 됨")
+    if len(out["drivers"]) < out.get("min_drivers", 2):
+        raise ValueError(f"변수 문단이 {out.get('min_drivers', 2)}개가 안 됨")
     return out
 
 
@@ -1438,8 +1577,12 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
         raise Skip("영상 없음")
     ctx = Ctx(day, slot, items, briefing, log)
     log(f"장: {ctx.label} · 중심 사건: {ctx.center['text'] if ctx.center else '없음'}")
+    ctx.driver_cands = driver_candidates(items, briefing, ctx.market, log)
+    ctx.shape = day_shape(briefing, ctx.driver_cands, log)
     common = _common(ctx)
     common["rules"] = STORY_RULES.format(numbers_rule=common["numbers_rule"])
+    sectors_rule = ("3~5개, 블로그 데이터에 있는 업종만. 등락 숫자는 따로 붙이니 쓰지 않는다." if ctx.shape["table"] else
+                    "오늘은 업종 사이 차이가 작아 표를 넣지 않는다. 빈 배열.")
     cands = "\n".join(f"- {c['text']}" for c in ctx.candidates if not c["must"]) or "(없음)"
     has_first = any(c["must"] for c in ctx.candidates)
     market_rule = ("지수 등락 한 줄은 이미 따로 있으니 지수 숫자는 다시 쓰지 않는다. 블로그 데이터의 업종 · 종목 등락 숫자를 넣어 "
@@ -1448,7 +1591,9 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
     checks_rule = ("장 시작 줄(지난밤 장 뒤 첫 반응)은 따로 들어가니 쓰지 않는다. " if has_first else "") + \
         "다음 장과 이어지지 않는 일정은 고르지 않는다. 고를 것이 없으면 빈 배열."
     prompt = STORY_PROMPT.format(**common, label=ctx.label, points_title=points_title(day, slot), candidates=cands,
-                                 market_rule=market_rule, checks_rule=checks_rule)
+                                 market_rule=market_rule, checks_rule=checks_rule, sectors_rule=sectors_rule,
+                                 drivers_rule=ctx.shape["rule"], overview_len=ctx.shape["overview"],
+                                 driver_cands="\n".join(c["text"] for c in ctx.driver_cands) or "(없음 → 재료에서 직접 고른다, cand는 0)")
     last = None
     for m in dict.fromkeys(([model] if model else []) + STORY_MODELS):
         config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = m, "off"
@@ -1518,7 +1663,10 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
         "overview": fix(out["overview"]),
         "indexLine": ctx.index_line,
         "market": fix(out["market"]),
-        "drivers": [{"heading": fix(d["heading"]), "body": fix(d["body"])} for d in out["drivers"]],
+        "shape": ctx.shape["mode"],
+        "drivers": [{"heading": fix(d["heading"]), "body": fix(d["body"]),
+                     "topic": ctx.driver_cands[d["cand"] - 1]["topic"] if 1 <= d["cand"] <= len(ctx.driver_cands) else ""}
+                    for d in out["drivers"]],
         "sectors": out["sectors"],
         "pointsTitle": points_title(day, slot),
         "points": out["first"] + [fix(x) for x in out["checks"]],
