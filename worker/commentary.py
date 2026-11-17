@@ -1316,7 +1316,7 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
 - 비위 · 사고 주장: 문장을 '~라고 ○○(채널 · 매체)가 전했다'로 끝낸다. ○○는 재료에 나온 채널 · 매체 이름이다 ('외신 · 업계'는 안 됨).
   재료에서 한 곳만 말했으면 그 내용을 빼고 문장을 다시 쓴다
 - 말한 사람이 흐림: '외신 · 증권가 · 투자자들은' 대신 재료의 이름 · 채널을 쓰거나, 주어를 사실(지수 · 종목 · 기관)로 바꾼다
-- 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다
+- 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다. 다른 숫자로 바꿔 넣지 않는다
 - 권하는 말투: 명사로 끝나는 구절이나 사실 문장으로 고친다
 - 상투어: 같은 뜻의 쉬운 말로 풀어 쓴다
 - '-다'체가 아님: 그 문장을 '-다'로 끝나게 고친다. 걸리지 않은 문장에도 '-습니다'가 있으면 모두 '-다'로 고친다
@@ -1326,16 +1326,16 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
 """
 
 ADVICE_END = re.compile(r"(해야 한다|할 필요가 있다|필요가 있다|주시해야 한다|유효하다|바람직하다)[.。]?$")
-PLAIN = {"하방 압력": "내리는 힘", "하방 압박": "내리는 힘", "투심": "투자 심리", "팔자세": "팔자", "사자세": "사자",
-         "매도세": "팔자", "매수세": "사자", "매도 물량": "파는 물량", "디위스킹": "위험 줄이기", "디리스킹": "위험 줄이기",
-         "밸류에이션": "주가 수준", "모멘텀": "동력", "펀더멘털": "기초 체력"}
-CLICHE = re.compile(r"유동성 재편|차익 실현세|이중고|극대화|면치 못했다|직격탄|온도 차|옥석 가리기|불가피하다")
+PLAIN = {"팔자세": "팔자", "사자세": "사자", "매도세": "팔자", "매수세": "사자", "순매도": "팔자", "순매수": "사자",
+         "순팔자": "팔자", "순사자": "사자", "디위스킹": "위험 줄이기", "디리스킹": "위험 줄이기"}
+CLICHE = re.compile(r"하방 압력|하방 압박|유동성 재편|차익 실현세|이중고|극대화|면치 못했다|직격탄|옥석 가리기|상존")
+JOSA = {"과": "와", "이": "가", "을": "를", "은": "는"}   # '투심' → '투자 심리'로 바꾸면 받침이 없어짐 ('투심과' → '투자 심리와')
 
 
 def plain(t):
     for a, b in PLAIN.items():
         t = t.replace(a, b)
-    return t
+    return re.sub(r"투심(과|이|을|은)?(?=[\s,.]|$)", lambda m: "투자 심리" + JOSA.get(m.group(1), ""), t).replace("투심", "투자 심리")
 
 
 POLITE_END = re.compile(r"(습니다|입니다|됩니다|합니다|ㅂ니다|니다)[.。]?$")
@@ -1390,14 +1390,20 @@ def story_problems(out, ctx):
         m = CLICHE.search(s)
         if m and not p:
             p.append(f"{SOFT}상투어 '{m.group()}'를 쉬운 말로")
-        x = bad_number(s, ctx.numbers)
-        if x and x.rstrip("%").replace(".", "").replace("e+", "").isdigit():   # 왜 걸렸는지 보게 가까운 재료 숫자를 같이 적는다
-            import summarize
-            kind = "%" if x.endswith("%") else "n"
-            p.append(f"{SOFT}(재료의 가까운 숫자: {summarize._near(kind, float(x.rstrip('%')), ctx.numbers)})")
+
         if p:
             found.append((s, title, p))
     return found
+
+
+def near_numbers(s, ctx):
+    """로그용: 숫자가 걸린 문장이면 재료에서 가장 가까운 숫자."""
+    import summarize
+    x = bad_number(s, ctx.numbers)
+    if not x:
+        return ""
+    kind = "%" if x.endswith("%") else "n"
+    return f" (재료의 가까운 숫자: {summarize._near(kind, float(x.rstrip('%')), ctx.numbers)})"
 
 
 def story_drop(out, found):
@@ -1444,11 +1450,17 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                     break
                 log(f"  {m}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함 ({turn}번째)")
                 for x, _, pr in found:
-                    log(f"    - {' · '.join(pr)}: {x}")
+                    log(f"    - {' · '.join(pr)}{near_numbers(x, ctx)}: {x}")
                 probs = "\n".join(f'- "{x}" → {" · ".join(pr)}' for x, _, pr in found)
-                raw = llm.generate_json(STORY_FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
-                                        log=log, what=f"이어 쓰는 글 고쳐 쓰기 {m}")
-                out = story_ok(story_out(raw, ctx))
+                try:
+                    raw2 = llm.generate_json(STORY_FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
+                                             log=log, what=f"이어 쓰는 글 고쳐 쓰기 {m}")
+                    out2 = story_ok(story_out(raw2, ctx))
+                except (llm.LLMError, ValueError) as e:
+                    # 고쳐 쓰기만 안 된 것 (11-17: 3.6 flash 무료 한도 429). 얇은 모델로 처음부터 다시 쓰는 것보다 쓴 글에서 걸린 문장만 뺀다
+                    log(f"  {m}: 고쳐 쓰기 안 됨 ({e}) → 처음 쓴 글에서 걸린 문장만 뺌")
+                    break
+                raw, out = raw2, out2
                 found = story_problems(out, ctx)
             for x, _, pr in found:
                 if all(y.startswith(SOFT) for y in pr):
