@@ -506,7 +506,7 @@ JSON 객체 하나로만 답합니다:
   "heading": "{side} 쪽 시각의 제목. 이유와 방향을 함께 말한다 (예: 'AI 투자, 실적이 받쳐 준다', '금리 부담에 비싸진 주가'). 25자 안",
   "claim": "주장 한 문장. 중심 사건을 {side} 쪽에서 본 것. 우리 판단이 아니라 시각임이 드러나게 끝낸다 (예: '…라고 보는 쪽이다', '…라는 시각이다')",
   "evidence": ["근거 2~3개, 한 문장씩. 근거마다 말한 사람이나 채널을 붙인다 (예: 'CNBC에서 ○○는 …라고 봤다')"],
-  "risk": "이 시각이 틀리는 조건 한 문장, 사실로 쓴다. 위 근거로 든 사건 · 숫자가 뒤집히는 조건으로 늘 '…면 이 시각은 힘을 잃는다.'로 끝낸다 (예: '엔비디아 실적에서 데이터센터 매출이 줄면 이 시각은 힘을 잃는다.')",
+  "risk": "이 시각이 틀리는 조건 한 문장, 사실로 쓴다. 위 근거로 든 사건 · 숫자가 뒤집히는 조건으로 늘 '…면 이 시각은 힘을 잃는다.'로 끝낸다. {side} 쪽 주장과 반대로 일이 풀리는 조건이어야 한다 (예: '{risk_example}')",
   "facts_used": [위 공통 사실 가운데 이 시각의 근거와 이어지는 번호],
   "tickers": ["본문에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
   "sources": [근거로 쓴 영상 번호 (숫자). 방송에서 가져온 숫자가 있으면 그 영상은 꼭 넣는다]
@@ -565,7 +565,9 @@ def view_prompt(ctx, d, side_videos, facts):
         common["material"] = material_text(ctx.items, only)
         common["n"] = f"전체 {len(ctx.items)}개 중 중심 사건을 다룬 {len(only)}"
         vids = ", ".join(str(n) for n in sorted(only & {idx[v] for v in side_videos})) or "(중심 사건 영상에는 없음)"
-    return VIEW_PROMPT.format(**common, side=DIR_KO[d], side_videos=vids,
+    risk_example = ("엔비디아 실적에서 데이터센터 매출이 줄면 이 시각은 힘을 잃는다." if d == "bull" else
+                    "엔비디아 실적에서 데이터센터 매출이 예상을 웃돌면 이 시각은 힘을 잃는다.")
+    return VIEW_PROMPT.format(**common, side=DIR_KO[d], side_videos=vids, risk_example=risk_example,
                               facts="\n".join(f"{n}. {f}" for n, f in enumerate(facts, 1)))
 
 
@@ -583,6 +585,17 @@ def _sent(x):
     """본문에 들어갈 한 문장: 재료 번호를 빼고, 끝에 마침표가 없으면 붙인다."""
     x = _clean(VIDEO_REF.sub("", str(x or "")))
     return x + "." if x and x[-1] not in ".!?。…" else x
+
+
+def distinct(xs, limit=0.6):
+    """말한 사람만 다르고 내용이 거의 같은 문장은 앞의 것만 남긴다."""
+    from difflib import SequenceMatcher
+    out = []
+    for x in xs:
+        body = re.sub(r"^.*?(은|는) ", "", x, count=1)
+        if not any(SequenceMatcher(None, body, re.sub(r"^.*?(은|는) ", "", y, count=1)).ratio() >= limit for y in out):
+            out.append(x)
+    return out
 
 
 def _cut_bytes(s, n):
@@ -666,7 +679,7 @@ def view_out(raw, ctx):
     out = {
         "heading": _clean(raw.get("heading")).strip("'\"")[:40],
         "claim": _sent(raw.get("claim")),
-        "evidence": [_sent(x) for x in raw.get("evidence") or [] if _sent(x)][:3],
+        "evidence": distinct([_sent(x) for x in raw.get("evidence") or [] if _sent(x)])[:3],
         "risk": _sent(raw.get("risk")),
         "facts_used": _ints(raw.get("facts_used")),
         "tickers": raw.get("tickers") or [], "sources": _ints(raw.get("sources")),
