@@ -1121,7 +1121,9 @@ def resolve_conflicts(facts, views, ctx, log, protect=True):
                 return sum(1 for t in src if any(x[0] == name and x[1] == kind and abs(x[2] - v) <= abs(v) * 0.02
                                                  for x in indicator_values(t)))
             in_facts = {p[2] for p in ps if p[4][0] == "facts"}
-            keep = max(vals, key=lambda v: (support(v), any(abs(v - f) <= abs(v) * 0.05 for f in in_facts)))
+            def detail(v):   # 같으면 더 자세한 숫자 ('25조 7,729억' > '20조'). 11-17: 사실 칸이 없는 이어 쓰는 글에서 어림값이 남음
+                return max(len(re.sub(r"[^1-9]", "", p[3])) for p in ps if abs(p[2] - v) <= abs(v) * 0.05)
+            keep = max(vals, key=lambda v: (support(v), any(abs(v - f) <= abs(v) * 0.05 for f in in_facts), detail(v)))
             for p in ps:
                 if abs(p[2] - keep) > abs(keep) * 0.05:
                     where = p[4]
