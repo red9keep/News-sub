@@ -31,7 +31,7 @@ on:
         type: boolean
         default: false
       model:
-        description: "story에서 먼저 써 볼 Gemini 모델 (비우면 기본)"
+        description: "story에서 쓸 모델 (비우면 gemini-3.6-flash, NVIDIA는 nvidia:z-ai/glm-5.3)"
         type: string
         default: ""
       scheduled:
@@ -83,6 +83,7 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}   # 없어도 됨 (없으면 기본 키만)
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}   # story 시험에서 model=nvidia:z-ai/glm-5.3 일 때만 씀
           STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
           # 다 쓴 글의 status. 비우면 draft-test (블로그가 발행하지 않는 시험 글). ready로 바꾸는 것은 사용자가 글을 보고 정한다
           COMMENTARY_STATUS: ${{ vars.COMMENTARY_STATUS }}

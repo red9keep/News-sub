@@ -1251,6 +1251,8 @@ STORY_REWRITES = 3     # 틀이 어긋나면(제목에 걸린 점 등) 처음부
 
 def story_keys():
     """(이름, 키) — 기본 키, 그다음 예비 키(GEMINI_API_KEY_BACKUP, 있으면)."""
+    if config.LLM_PROVIDER == "nvidia":
+        return [("NVIDIA 키", None)]
     keys = [("기본 키", config.GEMINI_API_KEY)]
     if config.GEMINI_API_KEY_BACKUP and config.GEMINI_API_KEY_BACKUP != config.GEMINI_API_KEY:
         keys.append(("예비 키", config.GEMINI_API_KEY_BACKUP))
@@ -1262,7 +1264,8 @@ def story_call(prompt, what, keys, log):
     import transcribe
     last = None
     for i, (name, key) in enumerate(list(keys)):
-        config.GEMINI_API_KEY, transcribe._client = key, None
+        if key is not None:
+            config.GEMINI_API_KEY, transcribe._client = key, None
         try:
             r = llm.generate_json(prompt, log=log, what=f"{what} ({name})")
         except llm.LLMError as e:
@@ -1357,7 +1360,10 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
 - 비위 · 사고 주장: 문장을 '~라고 ○○(채널 · 매체)가 전했습니다'로 끝낸다. ○○는 재료에 나온 채널 · 매체 이름이다 ('외신 · 업계'는 안 됨).
   재료에서 한 곳만 말했으면 그 내용을 빼고 문장을 다시 쓴다
 - 말한 사람이 흐림: '외신 · 증권가 · 투자자들은' 대신 재료의 이름 · 채널을 쓰거나, 주어를 사실(지수 · 종목 · 기관)로 바꾼다
-- 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다. 다른 숫자로 바꿔 넣지 않는다
+- 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다. 다른 숫자로 바꿔 넣지 않는다.
+  숫자를 빼면 알맹이가 없어지는 문장('외국인이 물량을 내놓으며 수급을 흔들었습니다')은 문장째 빼고 앞뒤 문장을 잇는다
+- 소속 · 직함이 재료와 다름: 재료에 적힌 소속 · 직함으로 고치거나 괄호 · 직함을 뺀다
+- 재료에 없는 이름 · 말한 곳: 재료에 적힌 이름 · 채널로 고친다. 재료에서 찾을 수 없으면 그 문장을 빼고 앞뒤를 잇는다
 - 권하는 말투: 명사로 끝나는 구절이나 사실 문장으로 고친다
 - 상투어: 같은 뜻의 쉬운 말로 풀어 쓴다
 - '-습니다'체가 아님: 그 문장을 '-습니다'체로 고친다 ('내렸다' → '내렸습니다'). 걸리지 않은 문장에도 '-다'체가 있으면 모두 고친다
@@ -1471,6 +1477,10 @@ def driver_candidates(items, briefing, market, log=None, limit=6):
             bonus += 2
             link.append("지수 전체가 1% 넘게 움직인 날의 거시 변수")
         # 11-17 한국장 시험: 종목 추천(철강 톱픽 · 가스공사 실적)이 '코스피 급락'과 같은 점수 → 시장 · 업종 이야기에 점수를 더 준다
+        if not c["moved"] and not link:   # 11-17 한국장: '국가자격시험 부정행위 전수조사'가 후보 3번
+            if log:
+                log(f"  변수 후보에서 뺌 (방향 · 시장 연결 없음): {c['topics'].most_common(1)[0][0]}")
+            continue
         score = 3 * len(c["channels"]) + 2 * len(c["wide"]) + len(c["moved"]) + min(len(c["videos"]), 10) + bonus
         tops = [t for t, _ in c["topics"].most_common(3)]
         out.append({"score": round(score, 1), "topic": tops[0], "more": tops[1:], "channels": len(c["channels"]),
@@ -1559,6 +1569,87 @@ def story_ok(out):
     return out
 
 
+# ---------- 발언자 대조 (11-17: '케빈 워시(연준 이사)' · '마크(블룸버그)' · flash-lite가 지어낸 '한국거래소는 … 분석했습니다') ----------
+AFFIL = "[소속] "   # 고쳐 쓰게 하고, 그래도 남으면 문장을 빼지 않고 파이썬이 그 소속 · 직함만 지운다
+PAREN_SPEAKER = re.compile(r"(?<![가-힣A-Za-z])([가-힣A-Za-z]+(?: [가-힣A-Za-z]+){0,2})\(([^()]{2,25})\)(?=(?:은|는|이|가)\s)")
+TITLE_SPEAKER = re.compile(r"((?:[가-힣A-Za-z&]+ ){1,5})([가-힣]*(?:%s))(?=(?:은|는)\s)" % "|".join(sorted(TITLES, key=len, reverse=True)))
+SPEECH_END = re.compile(r"((분석|평가|전망|지적|주장|설명|강조|경고|언급|예상|진단|해석|촉구|낙관)했습니다|"
+                        r"봤습니다|보았습니다|밝혔습니다|말했습니다|전했습니다|내다봤습니다)[.。]?$")
+LEAD_WORDS = {"반면", "이에", "대해", "또한", "한편", "그러나", "다만", "특히", "이와", "관련해", "앞서", "이날", "여기에"}
+
+
+def _blocks(ctx):
+    if not hasattr(ctx, "_blocks"):
+        ctx._blocks = [b for b in (ctx.material + "\n\n" + ctx.briefing_json).split("\n\n") if b.strip()]
+    return ctx._blocks
+
+
+def _blocks_with(ctx, words):
+    return [b for b in _blocks(ctx) if all(w in b for w in words)]
+
+
+def speaker_problems(s, ctx):
+    """문장에 나온 말한 사람 · 소속 · 직함이 재료에 그렇게 있는지. → ([걸린 점], {지울 문자열: 바꿀 문자열})"""
+    out, strip = [], {}
+    src = ctx.material
+    for m in PAREN_SPEAKER.finditer(s):
+        name, aff = m.group(1), m.group(2).strip()
+        if re.search(r"[\d%]", aff) or not re.search(r"[가-힣A-Za-z]", aff):
+            continue   # '삼성전자(005930.KS)가' · '에너지(−1.91%)와'
+        toks = name.split()
+        if len(toks) == 1:
+            fulls = {f"{name} {y}" for y in re.findall(rf"(?<![가-힣]){re.escape(name)} ([가-힣]{{2,5}})", src)
+                     if not any(PARTICLE.sub("", y).endswith(t) for t in TITLES) and PARTICLE.sub("", y) not in NOT_NAME}
+            if fulls and name in src and aff.replace(" ", "") not in name:
+                people = sorted(f for f in fulls if any(aff.replace(" ", "") in b.replace(" ", "") for b in _blocks_with(ctx, [f])))
+                if people:
+                    out.append(f"이름이 반쪽 ('{name}' → 재료에 나온 '{people[0]}'처럼 전체 이름으로)")
+                    continue
+        if not any(t in src for t in toks if len(t) >= 2) and name not in src:
+            out.append(f"재료에 없는 이름 '{name}' (재료에 적힌 이름으로 쓰거나 그 문장을 뺀다)")
+            continue
+        blocks = _blocks_with(ctx, [name]) or _blocks_with(ctx, [toks[-1]])
+        flat = aff.replace(" ", "")
+        if blocks and not any(flat in b.replace(" ", "") or (keys_of(aff) and all(k in b for k in keys_of(aff))) for b in blocks):
+            out.append(f"{AFFIL}'{name}'의 소속 · 직함 '{aff}'가 재료와 다름 (재료에 적힌 대로 쓰거나 괄호를 뺀다)")
+            strip[m.group(0)] = name
+    for m in TITLE_SPEAKER.finditer(s):
+        toks = [t for t in m.group(1).split() if t not in LEAD_WORDS]
+        title = m.group(2)
+        base = next((t for t in TITLES if title.endswith(t)), title)
+        if not toks or all(len(t) < 2 for t in toks):
+            continue
+        blocks = _blocks_with(ctx, toks[:2]) or _blocks_with(ctx, toks[:1])
+        if not blocks:
+            if not any(t in src for t in toks if len(t) >= 2):
+                out.append(f"재료에 없는 이름 '{' '.join(toks)}' (재료에 적힌 이름으로 쓰거나 그 문장을 뺀다)")
+            continue
+        if not any(base in b for b in blocks):
+            out.append(f"{AFFIL}'{' '.join(toks)}'의 직함 '{title}'이 재료에 없음 (재료에 적힌 대로 쓰거나 직함을 뺀다)")
+            strip[f"{toks[-1]} {title}"] = toks[-1]
+    if not out and SPEECH_END.search(s.strip()) and not PAREN_SPEAKER.search(s) and not TITLE_SPEAKER.search(s):
+        m = re.match(r"^(.{2,40}?)(?:은|는)\s", s.strip())   # 기관 · 매체가 말한 것으로 쓴 문장
+        via = re.search(r"고 ((?:[^\s]+ )?[^\s]+?)(?:이|가) [가-힣]+니다[.。]?$", s.strip())   # '…라고 CNBC가 전했습니다'면 말한 곳은 CNBC
+        if m or via:
+            toks = [PARTICLE.sub("", t) for t in (via.group(1) if via else m.group(1)).split() if t not in LEAD_WORDS]
+            who = next((t for t in toks if len(t) >= 2 and t in src), toks[-1] if toks else "")
+            m = via or m
+            if len(who) >= 2 and who not in src:
+                out.append(f"재료에서 이 말을 한 곳을 찾지 못함 ('{who}'는 재료에 없음. 재료의 이름 · 채널로 쓰거나 그 문장을 뺀다)")
+            elif len(who) >= 2:
+                ks = keys_of(s[m.end():])
+                if ks and not any(len([k for k in ks if k in b]) >= 2 for b in _blocks_with(ctx, [who])):
+                    out.append(f"{SOFT}'{who}'가 이 말을 했는지 재료에서 확인되지 않음")
+    return out, strip
+
+
+def story_replace(out, old, new):
+    for k in ("summary", *STORY_PARAS):
+        out[k] = out[k].replace(old, new)
+    for d in out["drivers"]:
+        d["body"] = d["body"].replace(old, new)
+
+
 def story_problems(out, ctx):
     """[(문장, 제목인가, [걸린 점])]. 제목 · 소제목은 title 규칙으로 본다."""
     units = [(out["title"], True)] + [(d["heading"], True) for d in out["drivers"]] + [(out["summary"], False)]
@@ -1573,6 +1664,11 @@ def story_problems(out, ctx):
             p.append("'-습니다'체가 아님 ('내렸다'를 '내렸습니다'로)")
         if not title and ADVICE_END.search(s.strip()):
             p.append("독자에게 권하는 말투 ('…해야 한다')")
+        if s in prose:
+            sp, strip = speaker_problems(s, ctx)
+            p += sp
+            for a, b in strip.items():
+                ctx.strips.setdefault(s, {})[a] = b
         m = CLICHE.search(s)
         if m and not p:
             p.append(f"{SOFT}상투어 '{m.group()}'를 쉬운 말로")
@@ -1613,6 +1709,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
         raise Skip("영상 없음")
     ctx = Ctx(day, slot, items, briefing, log)
     log(f"장: {ctx.label} · 중심 사건: {ctx.center['text'] if ctx.center else '없음'}")
+    ctx.strips = {}
     ctx.driver_cands = driver_candidates(items, briefing, ctx.market, log)
     ctx.shape = day_shape(briefing, ctx.driver_cands, log)
     common = _common(ctx)
@@ -1632,6 +1729,8 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                                  driver_cands="\n".join(c["text"] for c in ctx.driver_cands) or "(없음 → 재료에서 직접 고른다, cand는 0)")
     import time
     m = model or STORY_MODEL
+    if m.startswith("nvidia:"):
+        config.LLM_PROVIDER, config.NVIDIA_MODEL = "nvidia", m.split(":", 1)[1]
     config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = m, "off"
     keys, main_key = story_keys(), config.GEMINI_API_KEY
     started, rewrites = time.monotonic(), 0
@@ -1660,6 +1759,14 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                 if all(y.startswith(SOFT) for y in pr):
                     log(f"    그대로 둠 ({' · '.join(pr)}): {x}")
             found = [f for f in found if not all(y.startswith(SOFT) for y in f[2])]
+            for x, _, pr in found:
+                if all(y.startswith((AFFIL, SOFT)) for y in pr):
+                    new = x
+                    for a, b in (ctx.strips.get(x) or {}).items():
+                        new = new.replace(a, b)
+                    log(f"    소속 · 직함만 지움 ({' · '.join(pr)}): {x}")
+                    story_replace(out, x, new)
+            found = [f for f in found if not all(y.startswith((AFFIL, SOFT)) for y in f[2])]
             if found:
                 if any(title for _, title, _ in found):
                     raise ValueError("제목 · 소제목에 걸린 점 남음: " + " · ".join(x for x, t, _ in found if t))
@@ -1716,7 +1823,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
         "pointsTitle": points_title(day, slot),
         "points": out["first"] + [fix(x) for x in out["checks"]],
         "oneLine": fix(out["one_line"]),
-        "tickers": tickers, "sources": sources, "model": f"gemini:{m}" + (" (예비 키)" if keys[0][0] == "예비 키" else ""),
+        "tickers": tickers, "sources": sources, "model": (m if m.startswith("nvidia:") else f"gemini:{m}") + (" (예비 키)" if keys[0][0] == "예비 키" else ""),
     }
 
 
