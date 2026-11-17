@@ -713,6 +713,9 @@ TITLES = {"이사", "본부장", "대표", "위원", "연구원", "애널리스�
 # 틀리는 조건이 본문과 이어지는지 볼 때 세지 않는 말
 GENERIC = {"시장", "시각", "힘을", "잃는다", "실적", "발표", "확인", "확인되어", "주가", "증시", "기술주", "하락", "상승", "전반",
            "경우", "이후", "가능성", "우려", "전망", "기대", "예상", "투자자", "투자", "이번", "다음", "현재", "추가", "크게", "계속"}
+# 이름 뒤에 붙어도 이름의 일부가 아닌 말 (11-17: 재료 '조슈아 발언' → '조슈아 발언은'으로 고쳐 씀)
+NOT_NAME = {"발언", "발언자", "의견", "분석", "전망", "주장", "설명", "인터뷰", "출연", "측", "씨", "등", "역시", "또한", "이번",
+            "외국인", "기관", "개인", "지수", "주가", "시장", "증시"}
 SOFT = "[고쳐 보기만] "   # 고쳐 쓰게 하되, 그래도 남아도 문장은 빼지 않는다
 
 
@@ -763,7 +766,8 @@ def half_name(s, ctx):
         if not (re.search(r"[A-Za-z]", w) or w in MEDIA or any(w and (w in ch or ch.split()[0] in w) for ch in ctx.channel_text)):
             continue
         fulls = {f"{x} {y}" for y in re.findall(rf"(?<![가-힣]){re.escape(x)} ([가-힣]{{2,5}})", src)
-                 if not any(PARTICLE.sub("", y).endswith(t) for t in TITLES)}   # '베센트 재무장관'은 이름 아님
+                 if not any(PARTICLE.sub("", y).endswith(t) for t in TITLES)   # '베센트 재무장관'은 이름 아님
+                 and PARTICLE.sub("", y) not in NOT_NAME and y not in NOT_NAME}
         if fulls and not any(f in s for f in fulls):
             return x, sorted(fulls)[0]
     return None
@@ -1128,8 +1132,8 @@ def unify_names(texts, log):
     first, reps = {}, {}
     for t in texts:
         for a, b in NAME_PAIR.findall(t):
-            if b in TITLES or a in TITLES:
-                continue
+            if b in TITLES or a in TITLES or b in NOT_NAME or a in NOT_NAME or PARTICLE.search(a):
+                continue   # '코스피가 외국인' · '코스피는 외국인'을 같은 사람 두 표기로 본 일 (11-17)
             for a0 in first.get(b, []):
                 if a0 != a and a0[0] == a[0] and SequenceMatcher(None, a0, a).ratio() >= 0.4:
                     reps[f"{a} {b}"] = f"{a0} {b}"
