@@ -619,7 +619,8 @@ JUDGMENT_END = re.compile(r"(전망된다|전망이다|보인다|예상된다|�
 VAGUE = re.compile(r"(^|\s)(외신|증권가|은행권|월가|시장 관계자|전문가들|전문가들은|시장에서는|시장 참여자들|업계에서는|일각에서는|투자자들은|분석가들은|애널리스트들은)")
 SENT_SPLIT = re.compile(r"(?<=[.!?。])\s+")
 # 이름 반쪽 (11-17 시험: '블룸버그에서 마크는'). 재료에는 'X Y'로만 나오는데 문장에는 X만
-HALF_NAME = re.compile(r"에서\s+([가-힣]{2,4})(?:은|는|이|가)\s")
+HALF_NAME = re.compile(r"에서\s+([가-힣]{2,4})(?:은|는)\s")
+MEDIA = {"블룸버그", "로이터", "폭스", "야후", "월스트리트저널", "파이낸셜타임스", "연합뉴스", "한국경제", "매일경제"}
 TITLES = {"이사", "본부장", "대표", "위원", "연구원", "애널리스트", "센터장", "팀장", "장관", "의원", "회장", "부장", "전략가",
           "교수", "총재", "의장", "사장", "부사장", "상무", "전무", "실장", "기자", "앵커", "위원장", "매니저", "수석", "고문"}
 # 틀리는 조건이 본문과 이어지는지 볼 때 세지 않는 말
@@ -670,6 +671,10 @@ def half_name(s, ctx):
     src = ctx.material
     for m in HALF_NAME.finditer(s):
         x = m.group(1)
+        before = s[:m.start()].split()[-1:] or [""]   # '블룸버그에서'의 '블룸버그' — 채널 · 매체일 때만 (11-17: '속에서 주가가')
+        w = before[0]
+        if not (re.search(r"[A-Za-z]", w) or w in MEDIA or any(w and (w in ch or ch.split()[0] in w) for ch in ctx.channel_text)):
+            continue
         fulls = {f"{x} {y}" for y in re.findall(rf"(?<![가-힣]){re.escape(x)} ([가-힣]{{2,5}})", src)
                  if not any(PARTICLE.sub("", y).endswith(t) for t in TITLES)}   # '베센트 재무장관'은 이름 아님
         if fulls and not any(f in s for f in fulls):
@@ -862,26 +867,30 @@ def known_tickers(items, briefing):
     return out
 
 
-IPO_CONTEXT = re.compile(r"IPO|기업공개|상장\s*(예정|추진|계획|을\s*앞|전)|비상장|공모|청약")
+UNLISTED_MARK = re.compile(r"^(.+?)\s*\((비상장|상장\s*전|상장\s*예정)\)$")
 
 
 def unlisted_tickers(items, briefing):
-    """상장 전 · 비상장으로 보이는 티커: 묶음 movers에 없고, 이 티커가 나온 이슈 · 종목 의견 글이 모두 IPO · 비상장 이야기.
+    """재료에 '(비상장)' 표시가 붙은 티커 → 표시를 뗀 티커 (그 자체 · 뗀 것 둘 다).
 
-    요약 지시문은 비상장사를 '회사명(비상장)'으로 적게 하지만, 상장을 앞둔 회사는 AI가 티커를 지어 넣는다 (11-17 'ANTH')."""
+    요약 지시문은 비상장사를 '회사명(비상장)'으로 적게 한다. 11-17 시험: 재료 'ANTH(비상장)'를 AI가 'ANTH'로 옮겨 씀.
+    (IPO 이야기에만 나온 티커를 빼는 방식은 MSFT · ARKK처럼 상장 종목까지 빼서 버림)"""
     movers = {str(m.get("ticker") or "").upper() for m in ((briefing or {}).get("close") or {}).get("movers") or []}
-    ctx = {}
+    out = set()
     for s in items:
+        ts = list(s.get("tickers") or [])
         for it in s.get("issues") or []:
-            txt = " ".join([str(it.get("topic") or ""), *map(str, it.get("lines") or [])])
-            for t in it.get("tickers") or []:
-                ctx.setdefault(str(t).strip().upper(), []).append(txt)
+            ts += it.get("tickers") or []
         for p in s.get("picks") or []:
-            t = str(p.get("ticker") or "").strip().upper()
-            if t:
-                ctx.setdefault(t, []).append(" ".join(str(p.get(k) or "") for k in ("name", "reason", "action")))
-    return {t for t, xs in ctx.items()
-            if t not in movers and xs and all(IPO_CONTEXT.search(x) for x in xs)}
+            ts.append(p.get("ticker"))
+            m = UNLISTED_MARK.match(" ".join(str(p.get("name") or "").split()))
+            if m and p.get("ticker"):
+                ts.append(f"{p.get('ticker')}(비상장)")
+        for t in ts:
+            m = UNLISTED_MARK.match(str(t or "").strip().upper())
+            if m:
+                out |= {m.group(0), m.group(1).strip()}
+    return out - movers
 
 
 def mentioned(t, names, text):
