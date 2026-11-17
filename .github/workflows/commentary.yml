@@ -26,6 +26,14 @@ on:
         description: "저장하지 않고 결과만 로그에 출력"
         type: boolean
         default: false
+      story:
+        description: "이어 쓰는 글 시험 (저장 안 함, 11-17)"
+        type: boolean
+        default: false
+      model:
+        description: "story에서 먼저 써 볼 Gemini 모델 (비우면 기본)"
+        type: string
+        default: ""
       scheduled:
         description: "바깥 예약기용 (사람은 끄고 쓴다)"
         type: boolean
@@ -60,6 +68,8 @@ jobs:
           [ -n "$DAY" ] && args="$args --date $DAY"
           [ "$FORCE" = "true" ] && args="$args --force"
           [ "$DRY" = "true" ] && args="$args --dry"
+          [ "$STORY" = "true" ] && args="$args --story"
+          [ -n "$MODEL" ] && args="$args --model $MODEL"
           echo "python commentary.py $args"
           python commentary.py $args
         env:
@@ -68,6 +78,8 @@ jobs:
           DAY: ${{ inputs.date }}
           FORCE: ${{ inputs.force }}
           DRY: ${{ inputs.dry }}
+          STORY: ${{ inputs.story }}
+          MODEL: ${{ inputs.model }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
