@@ -1313,7 +1313,9 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
 
 걸린 문장만 고쳐 씁니다. 문단의 앞뒤 문장과 자연스럽게 이어지게 고치고, 나머지 문장과 칸은 그대로 둡니다.
 - 말한 사람 없는 판단: 재료에서 그렇게 말한 사람 · 채널을 붙이거나, 예측을 빼고 사실로 고친다 ('…가 변수다', '갈림길은 …이다')
-- 비위 · 사고 주장: 문장을 '~라고 ○○(채널 · 매체)가 전했다'로 끝낸다. 재료에서 한 곳만 말했으면 그 내용을 빼고 문장을 다시 쓴다
+- 비위 · 사고 주장: 문장을 '~라고 ○○(채널 · 매체)가 전했다'로 끝낸다. ○○는 재료에 나온 채널 · 매체 이름이다 ('외신 · 업계'는 안 됨).
+  재료에서 한 곳만 말했으면 그 내용을 빼고 문장을 다시 쓴다
+- 말한 사람이 흐림: '외신 · 증권가 · 투자자들은' 대신 재료의 이름 · 채널을 쓰거나, 주어를 사실(지수 · 종목 · 기관)로 바꾼다
 - 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다
 - 권하는 말투: 명사로 끝나는 구절이나 사실 문장으로 고친다
 - '-다'체가 아님: 그 문장을 '-다'로 끝나게 고친다. 걸리지 않은 문장에도 '-습니다'가 있으면 모두 '-다'로 고친다
@@ -1415,8 +1417,10 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
             raw = llm.generate_json(prompt, log=log, what=f"이어 쓰는 글 {m}")
             out = story_ok(story_out(raw, ctx))
             found = story_problems(out, ctx)
-            if found:
-                log(f"  {m}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함")
+            for turn in (1, 2):   # 문단 첫 문장이 빠지면 글이 끊기므로 두 번까지 고쳐 쓰게 한다 (11-17 시험)
+                if not found:
+                    break
+                log(f"  {m}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함 ({turn}번째)")
                 for x, _, pr in found:
                     log(f"    - {' · '.join(pr)}: {x}")
                 probs = "\n".join(f'- "{x}" → {" · ".join(pr)}' for x, _, pr in found)
@@ -1424,6 +1428,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                                         log=log, what=f"이어 쓰는 글 고쳐 쓰기 {m}")
                 out = story_ok(story_out(raw, ctx))
                 found = story_problems(out, ctx)
+            if found:
                 if any(title for _, title, _ in found):
                     raise ValueError("제목 · 소제목에 걸린 점 남음: " + " · ".join(x for x, t, _ in found if t))
                 for x, _, pr in found:
