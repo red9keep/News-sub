@@ -486,7 +486,7 @@ def _clean(x):
 
 
 # 원고에 남은 재료 번호 '[영상 39]' · '(영상 25, 26)' (11-17 시험: 근거 끝에 붙고 마침표가 빠짐)
-VIDEO_REF = re.compile(r"\s*[\[(（]\s*영상\s*[\d,\s·~-]+[\])）]")
+VIDEO_REF = re.compile(r"\s*(\[\s*(영상\s*)?[\d,\s·~-]+\]|[(（]\s*영상\s*[\d,\s·~-]+[)）])")  # '[39]'도 (11-17 두 번째 시험)
 
 
 def _sent(x):
@@ -813,7 +813,8 @@ def compose(day, slot, items, briefing, log=print):
                       "channels": ctx.center["channels"]} if ctx.center else None
     try:   # 한쪽만 실수로 나가지 않게 어느 호출이든 안 되면 그 편 전체 skip. 센 건수는 남긴다
         frame, m0 = ask("frame", frame_prompt(ctx), ctx, log)
-        facts = ([ctx.index_line] if ctx.index_line else []) + frame["facts"]
+        same = ctx.index_line.rstrip(".")   # AI가 지수 줄을 그대로 다시 쓰는 일 (11-17 시험)
+        facts = ([ctx.index_line] if ctx.index_line else []) + [f for f in frame["facts"] if not same or f.rstrip(".") != same]
         if not ctx.index_line and ctx.label not in facts[0]:
             facts[0] = f"{ctx.label}: {facts[0]}"   # Q15: 첫 줄은 어느 장 이야기인지로 시작 (파이썬이 붙임)
         views = []
