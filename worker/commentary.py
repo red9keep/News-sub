@@ -1407,13 +1407,14 @@ def driver_candidates(items, briefing, market, log=None, limit=6):
             continue
         k = root(max(mine, key=lambda k: (df[k], k)))
         c = by.setdefault(k, {"keys": Counter(), "topics": Counter(), "channels": set(), "moved": set(), "videos": set(),
-                              "tickers": set(), "cats": Counter()})
+                              "tickers": Counter(), "cats": Counter(), "issues": 0})
+        c["issues"] += 1
         c["keys"].update(ks)
         c["topics"][str(it.get("topic")).strip()] += 1
         c["channels"].add(ch)
         c["videos"].add(n)
         c["cats"][it.get("category")] += 1
-        c["tickers"] |= {str(t).strip().upper() for t in it.get("tickers") or []}
+        c["tickers"].update({str(t).strip().upper() for t in it.get("tickers") or []})
         if it.get("stance") in ("bullish", "bearish"):
             c["moved"].add(ch)
     clusters = list(by.values())
@@ -1421,8 +1422,10 @@ def driver_candidates(items, briefing, market, log=None, limit=6):
     for c in clusters:
         if len(c["channels"]) < 2 and len(c["videos"]) < 2:
             continue
-        keys, bonus, link = set(c["keys"]), 0.0, []
-        hit = [m for m in movers if str(m.get("ticker") or "").upper() in c["tickers"] or m.get("name") in keys]
+        # 시장 연결은 그 묶음의 중심 낱말 · 중심 종목일 때만 (11-17: 한두 번 스친 '엔비디아'로 앤트로픽 · 비트코인 묶음까지 연결됨)
+        keys, bonus, link = {k for k, _ in c["keys"].most_common(4)}, 0.0, []
+        main = {t for t, k in c["tickers"].items() if k * 3 >= c["issues"]}
+        hit = [m for m in movers if str(m.get("ticker") or "").upper() in main or m.get("name") in keys]
         if hit:
             m = max(hit, key=lambda m: abs(float(m["chg_pct"])))
             bonus += min(abs(float(m["chg_pct"])), 4)
