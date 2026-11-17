@@ -619,10 +619,17 @@ def pick_points(raw, candidates):
             continue
         seen.add(n)
         t = candidates[n - 1]["time"]
-        for pre in {t, t.replace("뒤", "후"), t.replace("후", "뒤")} if t else ():
-            if text.startswith(pre):  # '장 마감 뒤 — 장 마감 후 예정된 …' (11-17 시험)
-                text = text[len(pre):].lstrip(" ,·—-")
-                break
+        if t:   # '장 마감 뒤 — 장 마감 후 예정된 …' · '오늘 밤 미국 장 마감 뒤 — 오늘 밤 엔비디아 …' (11-17 시험)
+            words = {t, t.replace("뒤", "후"), t.replace("후", "뒤"), "오늘 밤", "내일 밤", "오늘", "내일", "미국",
+                     "장 마감 뒤", "장 마감 후", "장 시작 전"}
+            again = True
+            while again:
+                again = False
+                for w in sorted(words, key=len, reverse=True):
+                    if w and text.startswith(w):
+                        text = text[len(w):].lstrip(" ,·—-")
+                        again = True
+                        break
         line = f"{t} — {text}" if t else text
         if len(line) <= 45:
             out.append(line)
@@ -693,7 +700,7 @@ ALLEGATION = re.compile(r"스캔들|의혹|비리|비위|수사|사임|소송|�
 ATTRIBUTED = re.compile(r"(전했다|보도했다|밝혔다|말했다|지적했다|주장했다|발표했다|봤다)[.。]?$")
 # 말한 사람 없는 판단으로 끝나는 문장 (11-16 시험: '견고하다는 평가다' · '~로 전망된다')
 JUDGMENT_END = re.compile(r"(전망된다|전망이다|보인다|예상된다|평가다|평가된다|기대된다|관측된다|분석된다|풀이된다|"
-                          r"여겨진다|판단된다|전망이 나온다)[.。]?$")
+                          r"여겨진다|판단된다|전망이 나온다|전해졌다|알려졌다|나타났다고 한다)[.。]?$")
 # 말한 사람이 흐린 문장 (11-16 저녁 시험: '전문가들은 … 평가했다')
 # 11-17 시험: '외신이 전했다' · '매경TV 뉴스에서 증권가는' · '은행권은'
 VAGUE = re.compile(r"(^|\s)(외신|증권가|은행권|월가|시장 관계자|전문가들|전문가들은|시장에서는|시장 참여자들|업계에서는|일각에서는|투자자들은|분석가들은|애널리스트들은)")
@@ -770,7 +777,9 @@ def bad_day(s, ctx):
     return None
 
 
-FACT_OPINION = re.compile(r"(분석했다|봤다|보았다|평가했다|전망했다|언급했다|주장했다|예상했다|진단했다|해석했다)[.。]?$")
+FACT_OPINION = re.compile(r"(분석했다|봤다|보았다|평가했다|전망했다|언급했다|주장했다|예상했다|진단했다|해석했다|"
+                          r"경고했다|지적했다|내다봤다|강조했다|풀이했다|관측했다)[.。]?$")
+CLAIM_END = re.compile(r"(시각이다|보는 쪽이다|쪽이다|시각도 있다)[.。]?$")
 FACT_CAUSE = re.compile(r"여파로|때문에|영향으로|탓에|탓으로|에 따른|으로 인해|로 인해")
 RISK_END = re.compile(r"힘을 잃는다[.。]?$")
 OTHER_MARKET = {"US": re.compile(r"한국은행|금통위|코스피|코스닥|한국장"), "KR": None}
@@ -844,6 +853,8 @@ def sentence_problems(s, ctx, title):
 def key_problems(key, s, ctx):
     """칸마다 따로 보는 것: 사실 칸 의견 · 원인(3번), 근거의 중심 사건(4번), 관전 포인트 나라(5번)."""
     out = []
+    if key == "claim" and not CLAIM_END.search(s.strip()):   # 11-17: 주장이 '…라고 전했다'로 바뀌어 근거와 겹침
+        out.append(SOFT + "주장은 '…라는 시각이다 · …라고 보는 쪽이다'로 끝낸다 (채널 · 사람 이야기는 근거 칸 몫)")
     if key == "facts":
         if FACT_OPINION.search(s.strip()):
             out.append("사실 칸에 의견 (말한 사람의 판단은 시각 쪽 몫)")
@@ -924,6 +935,7 @@ FIX_PROMPT = """아래 JSON은 시황 해설 원고입니다. 다음 문장에 �
 - 근거에 중심 사건 이야기가 없음: 중심 사건과 이어지는 근거로 바꾸거나 그 근거를 뺀다
 - 다음 장과 다른 나라 일정: 그 관전 포인트를 뺀다
 - 틀리는 조건 끝맺음: '…면 이 시각은 힘을 잃는다.'로 끝나게 고친다
+- 주장 끝맺음: 채널 · 사람 이름 없이 '…라는 시각이다' · '…라고 보는 쪽이다'로 고친다. 비위 주장은 주장 문장에 넣지 않는다
 - 이름이 반쪽: 재료에 나온 전체 이름(성과 이름)으로 고친다
 - 틀리는 조건이 주장 · 근거와 이어지지 않음: 이 시각의 근거로 든 사건 · 숫자가 뒤집히면 힘을 잃는다는 한 문장으로 다시 쓴다
 - 비위 · 사고 주장: 채널 수가 모자라면 본문에서 그 문장을 빼고, '전했다'가 없으면 원고 안에 나온 채널 · 매체를 붙여
