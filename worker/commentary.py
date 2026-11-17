@@ -1243,7 +1243,36 @@ def compose(day, slot, items, briefing, log=print):
 # 지금은 시험 모드(--story, 저장 안 함). 블로그와 새 칸 형식을 맞춘 뒤 compose를 이 틀로 바꾼다 (요청 문서 17절).
 # 호출: 글 전체 1번 → 걸린 문장이 있으면 그 문장만 고쳐 쓰게 1번 → 그래도 남으면 그 문장을 문단에서 뺀다.
 
-STORY_MODELS = ["gemini-3.6-flash", *MODELS]   # 11-17 시험: flash-lite는 문단이 얇고 한쪽 시각만 씀
+STORY_MODEL = "gemini-3.6-flash"   # flash-lite로는 넘어가지 않는다 (11-17: 문단이 얇고, 고쳐 쓰다 출처를 지어냄)
+STORY_WAIT_MIN = 30    # 호출이 안 되면(한도 · 혼잡) 이만큼까지 기다리며 다시 해 본다. 그래도 안 되면 그 편 skip
+STORY_PAUSE_SEC = 300  # 두 키가 다 안 됐을 때 다음 시도까지 쉬는 시간
+STORY_REWRITES = 3     # 틀이 어긋나면(제목에 걸린 점 등) 처음부터 다시 쓰는 횟수
+
+
+def story_keys():
+    """(이름, 키) — 기본 키, 그다음 예비 키(GEMINI_API_KEY_BACKUP, 있으면)."""
+    keys = [("기본 키", config.GEMINI_API_KEY)]
+    if config.GEMINI_API_KEY_BACKUP and config.GEMINI_API_KEY_BACKUP != config.GEMINI_API_KEY:
+        keys.append(("예비 키", config.GEMINI_API_KEY_BACKUP))
+    return keys
+
+
+def story_call(prompt, what, keys, log):
+    """기본 키로 안 되면 예비 키로. 둘 다 안 되면 LLMError. 된 키를 맨 앞으로 옮겨 다음 호출도 그 키부터 쓴다."""
+    import transcribe
+    last = None
+    for i, (name, key) in enumerate(list(keys)):
+        config.GEMINI_API_KEY, transcribe._client = key, None
+        try:
+            r = llm.generate_json(prompt, log=log, what=f"{what} ({name})")
+        except llm.LLMError as e:
+            last = e
+            log(f"  {name}: 호출 실패 ({e})" + (" → 다음 키로" if i + 1 < len(keys) else ""))
+            continue
+        if i:
+            keys.insert(0, keys.pop(i))
+        return r
+    raise last
 
 STORY_RULES = """글쓰기 규칙:
 1. 재료에 없는 숫자 · 사건 · 종목은 쓰지 않는다.{numbers_rule}
@@ -1601,11 +1630,14 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                                  market_rule=market_rule, checks_rule=checks_rule, sectors_rule=sectors_rule,
                                  drivers_rule=ctx.shape["rule"], overview_len=ctx.shape["overview"],
                                  driver_cands="\n".join(c["text"] for c in ctx.driver_cands) or "(없음 → 재료에서 직접 고른다, cand는 0)")
-    last = None
-    for m in dict.fromkeys(([model] if model else []) + STORY_MODELS):
-        config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = m, "off"
+    import time
+    m = model or STORY_MODEL
+    config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = m, "off"
+    keys, main_key = story_keys(), config.GEMINI_API_KEY
+    started, rewrites = time.monotonic(), 0
+    while True:
         try:
-            raw = llm.generate_json(prompt, log=log, what=f"이어 쓰는 글 {m}")
+            raw = story_call(prompt, f"이어 쓰는 글 {m}", keys, log)
             out = story_ok(story_out(raw, ctx))
             found = story_problems(out, ctx)
             for turn in (1, 2):   # 문단 첫 문장이 빠지면 글이 끊기므로 두 번까지 고쳐 쓰게 한다 (11-17 시험)
@@ -1616,12 +1648,11 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                     log(f"    - {' · '.join(pr)}{near_numbers(x, ctx)}: {x}")
                 probs = "\n".join(f'- "{x}" → {" · ".join(pr)}' for x, _, pr in found)
                 try:
-                    raw2 = llm.generate_json(STORY_FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
-                                             log=log, what=f"이어 쓰는 글 고쳐 쓰기 {m}")
+                    raw2 = story_call(STORY_FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
+                                      f"이어 쓰는 글 고쳐 쓰기 {m}", keys, log)
                     out2 = story_ok(story_out(raw2, ctx))
-                except (llm.LLMError, ValueError) as e:
-                    # 고쳐 쓰기만 안 된 것 (11-17: 3.6 flash 무료 한도 429). 얇은 모델로 처음부터 다시 쓰는 것보다 쓴 글에서 걸린 문장만 뺀다
-                    log(f"  {m}: 고쳐 쓰기 안 됨 ({e}) → 처음 쓴 글에서 걸린 문장만 뺌")
+                except ValueError as e:   # 고쳐 쓴 글의 틀이 어긋남 → 처음 쓴 글에서 걸린 문장만 뺀다
+                    log(f"  {m}: 고쳐 쓴 글이 틀에 안 맞음 ({e}) → 처음 쓴 글에서 걸린 문장만 뺌")
                     break
                 raw, out = raw2, out2
                 found = story_problems(out, ctx)
@@ -1635,15 +1666,22 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                 for x, _, pr in found:
                     log(f"    문장 뺌 ({' · '.join(pr)}): {x}")
                 out = story_ok(story_drop(out, found))
-        except llm.LLMError as e:
-            last = f"호출 실패 ({e})"
-        except ValueError as e:
-            last = f"틀 어긋남 ({e})"
-        else:
             break
-        log(f"  {m}: {last}")
-    else:
-        raise Skip("호출 실패")
+        except llm.LLMError as e:   # 두 키 모두 안 됨 (한도 · 혼잡) → 쉬었다가 다시. 건너뛰지 않고 기다린다
+            waited = (time.monotonic() - started) / 60
+            if waited + STORY_PAUSE_SEC / 60 > STORY_WAIT_MIN:
+                config.GEMINI_API_KEY = main_key
+                log(f"  {m}: {waited:.0f}분 기다렸지만 호출이 안 됨 ({e}) → 그 편 건너뜀")
+                raise Skip("호출 실패") from e
+            log(f"  {m}: 모든 키로 호출 실패 ({e}) → {STORY_PAUSE_SEC // 60}분 쉬고 다시 (지금까지 {waited:.0f}분)")
+            time.sleep(STORY_PAUSE_SEC)
+        except ValueError as e:
+            rewrites += 1
+            log(f"  {m}: 틀 어긋남 ({e}) → " + ("처음부터 다시 씀" if rewrites < STORY_REWRITES else "그 편 건너뜀"))
+            if rewrites >= STORY_REWRITES:
+                config.GEMINI_API_KEY = main_key
+                raise Skip("틀 어긋남") from e
+    config.GEMINI_API_KEY = main_key
     # 같은 지표 두 값 · 이름 두 표기 (14절 2번 · 7번)
     paras = [{"body": out["overview"]}, {"body": out["market"]}, *out["drivers"]]
     _, paras = resolve_conflicts([], paras, ctx, log, protect=False)
@@ -1678,7 +1716,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
         "pointsTitle": points_title(day, slot),
         "points": out["first"] + [fix(x) for x in out["checks"]],
         "oneLine": fix(out["one_line"]),
-        "tickers": tickers, "sources": sources, "model": f"gemini:{m}",
+        "tickers": tickers, "sources": sources, "model": f"gemini:{m}" + (" (예비 키)" if keys[0][0] == "예비 키" else ""),
     }
 
 

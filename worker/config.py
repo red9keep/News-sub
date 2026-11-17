@@ -15,6 +15,8 @@ def edition_day(now):
 # 비밀값 (GitHub Secrets)
 FIREBASE_SERVICE_ACCOUNT = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "")  # 서비스 계정 JSON 문자열
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+# 시황 해설 예비 키 (11-17): 기본 키가 한도 · 오류로 안 될 때만 쓴다. 한도는 프로젝트마다 따로라 다른 구글 프로젝트의 키여야 뜻이 있다
+GEMINI_API_KEY_BACKUP = os.environ.get("GEMINI_API_KEY_BACKUP", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # 요약 · 주제 걸러내기에 쓰는 텍스트 모델 제공자: gemini(기본) 또는 nvidia (worker/llm.py)
