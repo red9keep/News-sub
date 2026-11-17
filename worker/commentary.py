@@ -321,6 +321,16 @@ class Ctx:
         self.center = center_event(items, briefing, self.market, log)
         self.candidates = point_candidates(items, briefing, self.next)
         self.tickers = known_tickers(items, briefing)
+        for t in unlisted_tickers(items, briefing):   # 11-17 시험: 상장 전 앤트로픽 'ANTH'
+            if t in self.tickers:
+                del self.tickers[t]
+                (log or print)(f"티커 뺌 (상장 전 · 비상장으로 보임): {t}")
+        # 날짜 대조: 재료 · 묶음에 나온 'N일'과 재료 기간 앞뒤 날짜
+        src = self.material + "\n" + self.briefing_json
+        self.days = {int(x) for x in re.findall(r"(?<!\d)(\d{1,2})일", src)}
+        self.days |= {int(x) for x in re.findall(r"\d{4}-\d{2}-(\d{2})", src)}
+        start, end = window(day, slot)
+        self.days |= {(start + timedelta(days=i)).day for i in range(-3, (end - start).days + 2)}
         # 숫자 대조: 방송 요약 + 묶음 숫자 (묶음 숫자는 % · 그냥 수 둘 다로) + 지수 이름 숫자
         self.numbers = summarize.source_numbers(self.material + "\n" + self.briefing_json)
         self.numbers += [(k, float(v)) for v in (500, 2000, 100, 200, 50, 30) for k in ("n",)]
@@ -360,7 +370,7 @@ RULES = """글쓰기 규칙:
 4. 실존 인물 · 회사의 비위 · 사고 주장(스캔들 · 의혹 · 수사 · 사임 · 소송 · 분식 등)은 서로 다른 채널 2곳 이상이 다뤘거나
    블로그 데이터 news에 있을 때만, '~라고 ○○(채널 · 매체)가 전했다'로 쓴다. 한 채널만 말한 것은 쓰지 않는다.
    제목에는 이런 말을 넣지 않는다.
-5. 자막 문장을 그대로 옮기지 않는다. 바꿔 써서 요약한다.
+5. 자막 문장을 그대로 옮기지 않는다. 바꿔 써서 요약한다. 사람 이름은 재료에 적힌 전체 이름(성과 이름)으로 쓴다.
 6. 독자 말을 쓴다. 분류 코드(RATES_FED 등) · scope · stance · bullish · bearish · edition · D+20 · A/B · 유보 같은 내부 말은 쓰지 않는다.
 7. 종목 이름은 한글(엔비디아 · 삼성전자), 숫자는 '2.04%' · '13억 달러' 식.
 8. 문장은 모두 '-다'로 끝낸다 ('-습니다' 쓰지 않음). '테스트 중' 같은 표시를 넣지 않는다. 설명이나 머리말 없이 JSON만 출력한다."""
@@ -420,7 +430,7 @@ JSON 객체 하나로만 답합니다:
   "heading": "{side} 쪽 시각의 제목. 이유와 방향을 함께 말한다 (예: 'AI 투자, 실적이 받쳐 준다', '금리 부담에 비싸진 주가'). 25자 안",
   "claim": "주장 한 문장. 중심 사건을 {side} 쪽에서 본 것. 우리 판단이 아니라 시각임이 드러나게 끝낸다 (예: '…라고 보는 쪽이다', '…라는 시각이다')",
   "evidence": ["근거 2~3개, 한 문장씩. 근거마다 말한 사람이나 채널을 붙인다 (예: 'CNBC에서 ○○는 …라고 봤다')"],
-  "risk": "이 시각이 틀리는 조건 한 문장, 사실로 쓴다 (예: '다음 주 엔비디아 실적에서 데이터센터 매출이 줄면 이 시각은 힘을 잃는다')",
+  "risk": "이 시각이 틀리는 조건 한 문장, 사실로 쓴다. 위 근거로 든 사건 · 숫자가 뒤집히는 조건으로 (예: '다음 주 엔비디아 실적에서 데이터센터 매출이 줄면 이 시각은 힘을 잃는다')",
   "facts_used": [위 공통 사실 가운데 이 시각의 근거와 이어지는 번호],
   "tickers": ["본문에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
   "sources": [근거로 쓴 영상 번호 (숫자). 방송에서 가져온 숫자가 있으면 그 영상은 꼭 넣는다]
@@ -608,6 +618,14 @@ JUDGMENT_END = re.compile(r"(전망된다|전망이다|보인다|예상된다|�
 # 11-17 시험: '외신이 전했다' · '매경TV 뉴스에서 증권가는' · '은행권은'
 VAGUE = re.compile(r"(^|\s)(외신|증권가|은행권|월가|시장 관계자|전문가들|전문가들은|시장에서는|시장 참여자들|업계에서는|일각에서는|투자자들은|분석가들은|애널리스트들은)")
 SENT_SPLIT = re.compile(r"(?<=[.!?。])\s+")
+# 이름 반쪽 (11-17 시험: '블룸버그에서 마크는'). 재료에는 'X Y'로만 나오는데 문장에는 X만
+HALF_NAME = re.compile(r"에서\s+([가-힣]{2,4})(?:은|는|이|가)\s")
+TITLES = {"이사", "본부장", "대표", "위원", "연구원", "애널리스트", "센터장", "팀장", "장관", "의원", "회장", "부장", "전략가",
+          "교수", "총재", "의장", "사장", "부사장", "상무", "전무", "실장", "기자", "앵커", "위원장", "매니저", "수석", "고문"}
+# 틀리는 조건이 본문과 이어지는지 볼 때 세지 않는 말
+GENERIC = {"시장", "시각", "힘을", "잃는다", "실적", "발표", "확인", "확인되어", "주가", "증시", "기술주", "하락", "상승", "전반",
+           "경우", "이후", "가능성", "우려", "전망", "기대", "예상", "투자자", "투자", "이번", "다음", "현재", "추가", "크게", "계속"}
+SOFT = "[고쳐 보기만] "   # 고쳐 쓰게 하되, 그래도 남아도 문장은 빼지 않는다
 
 
 def sentences(text):
@@ -647,6 +665,45 @@ def backing(sent, word, texts):
     return n
 
 
+def half_name(s, ctx):
+    """'○○에서 마크는'의 '마크'가 재료에는 '마크 뉴턴'처럼 더 긴 이름으로만 나오면 → (마크, 마크 뉴턴)."""
+    src = ctx.material
+    for m in HALF_NAME.finditer(s):
+        x = m.group(1)
+        fulls = {f"{x} {y}" for y in re.findall(rf"(?<![가-힣]){re.escape(x)} ([가-힣]{{2,5}})", src)
+                 if not any(PARTICLE.sub("", y).endswith(t) for t in TITLES)}   # '베센트 재무장관'은 이름 아님
+        if fulls and not any(f in s for f in fulls):
+            return x, sorted(fulls)[0]
+    return None
+
+
+def bad_day(s, ctx):
+    """재료 · 묶음 · 재료 기간에 없는 'N일' (11-17 시험: 관전 포인트 '26일 금통위'를 대조할 길이 없었음)."""
+    for x in re.findall(r"(?<!\d)(\d{1,2})일", s):
+        if int(x) not in ctx.days:
+            return f"{x}일"
+    return None
+
+
+def keys_of(text):
+    out = set()
+    for t in re.findall(r"[가-힣A-Za-z][가-힣A-Za-z0-9&]+", text):
+        t = PARTICLE.sub("", t)
+        if len(t) >= 2 and t not in COMMON and t not in GENERIC:
+            out.add(t)
+    return out
+
+
+def risk_problem(v):
+    """틀리는 조건이 제목 · 주장 · 근거와 겹치는 낱말이 하나도 없으면 (11-17 시험: 수급 이야기 끝에 엔비디아 실적)."""
+    if not v.get("risk"):
+        return None
+    body = " ".join([v.get("heading", ""), v.get("claim", ""), *v.get("evidence", [])])
+    if not any(k in body for k in keys_of(v["risk"])):
+        return SOFT + "틀리는 조건이 주장 · 근거와 이어지지 않음"
+    return None
+
+
 def sentence_problems(s, ctx, title):
     out = []
     m = FORBIDDEN.search(s)
@@ -670,6 +727,13 @@ def sentence_problems(s, ctx, title):
     x = bad_number(s, ctx.numbers)
     if x:
         out.append(f"재료에 없는 숫자 {x}")
+    x = bad_day(s, ctx)
+    if x:
+        out.append(f"재료에 없는 날짜 {x}")
+    if not title:
+        h = half_name(s, ctx)
+        if h:
+            out.append(f"이름이 반쪽 ('{h[0]}' → 재료에 나온 '{h[1]}'처럼 전체 이름으로)")
     return out
 
 
@@ -677,7 +741,8 @@ def units(kind, out):
     """검사할 칸: [(칸, 번호 또는 None, 글, 제목인가)]"""
     if kind == "frame":
         return ([("title_topic", None, out["title_topic"], True), ("summary", None, out["summary"], True)]
-                + [("facts", i, f, False) for i, f in enumerate(out["facts"])])
+                + [("facts", i, f, False) for i, f in enumerate(out["facts"])]
+                + [("points", i, p, False) for i, p in enumerate(out["points"])])
     return ([("heading", None, out["heading"], True), ("claim", None, out["claim"], False)]
             + [("evidence", i, e, False) for i, e in enumerate(out["evidence"])] + [("risk", None, out["risk"], False)])
 
@@ -686,10 +751,18 @@ def find_problems(kind, out, ctx):
     """→ [(칸, 번호, 문장, 제목인가, [걸린 점])]"""
     found = []
     for key, i, text, title in units(kind, out):
-        for s in [text] if title else sentences(text):
+        for s in [text] if title or key == "points" else sentences(text):
             p = sentence_problems(s, ctx, title)
             if p:
                 found.append((key, i, s, title, p))
+    if kind == "view":
+        p = risk_problem(out)
+        if p:
+            hit = [f for f in found if f[0] == "risk"]
+            if hit:
+                hit[0][4].append(p)
+            else:
+                found.append(("risk", None, out["risk"], False, [p]))
     return found
 
 
@@ -700,8 +773,8 @@ def drop_sentences(out, found):
         if i is None:
             out[key] = " ".join(x for x in sentences(out[key]) if x != s)
         else:
-            out[key][i] = " ".join(x for x in sentences(out[key][i]) if x != s)
-    for key in ("facts", "evidence"):
+            out[key][i] = "" if key == "points" else " ".join(x for x in sentences(out[key][i]) if x != s)
+    for key in ("facts", "evidence", "points"):
         if key in out:
             out[key] = [x for x in out[key] if x.strip()]
     return out
@@ -714,7 +787,9 @@ FIX_PROMPT = """아래 JSON은 시황 해설 원고입니다. 다음 문장에 �
 - 쓰면 안 되는 말: 같은 뜻의 사실 말로 바꾼다 ('외국인이 순매도했다' → '외국인이 주식을 팔았다', '매도 의견' → '낮춰 잡은 의견',
   '추천 종목' → '꼽은 종목', '매력적인 투자 기회라고 봤다' → '○○는 지금 수준을 낮다고 봤다'처럼 숫자 · 사람으로)
 - 말한 사람 없는 판단 · 말한 사람이 흐림: 원고 안에 그렇게 말한 사람 · 채널이 나와 있으면 '○○는 …라고 봤다'로 고치고, 없으면 그 문장을 뺀다
-- 재료에 없는 숫자: 그 숫자를 빼고 쓴다
+- 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 빼고 쓴다
+- 이름이 반쪽: 재료에 나온 전체 이름(성과 이름)으로 고친다
+- 틀리는 조건이 주장 · 근거와 이어지지 않음: 이 시각의 근거로 든 사건 · 숫자가 뒤집히면 힘을 잃는다는 한 문장으로 다시 쓴다
 - 비위 · 사고 주장: 채널 수가 모자라면 본문에서 그 문장을 빼고, '전했다'가 없으면 원고 안에 나온 채널 · 매체를 붙여
   '~라고 ○○가 전했다'로 고친다 (원고에 출처가 없으면 그 문장을 뺀다). 제목에서는 그 말을 빼고 중립 구절로 쓴다
 걸린 문장만 고치고 나머지 문장과 칸은 그대로 두고, 같은 틀의 JSON 하나로만 답합니다. '-다'체를 지킨다.
@@ -747,6 +822,10 @@ def ask(kind, prompt, ctx, log=print):
                 if any(title for _, _, _, title, _ in found):
                     raise ValueError("제목에 걸린 점 남음: " + " · ".join(
                         x for _, _, _, title, p in found if title for x in p))
+                for _, _, s, _, p in found:
+                    if all(x.startswith(SOFT) for x in p):
+                        log(f"    그대로 둠 ({' · '.join(p)}): {s}")
+                found = [f for f in found if not all(x.startswith(SOFT) for x in f[4])]
                 if found:
                     for _, _, s, _, p in found:
                         log(f"    문장 뺌 ({' · '.join(p)}): {s}")
@@ -783,6 +862,28 @@ def known_tickers(items, briefing):
     return out
 
 
+IPO_CONTEXT = re.compile(r"IPO|기업공개|상장\s*(예정|추진|계획|을\s*앞|전)|비상장|공모|청약")
+
+
+def unlisted_tickers(items, briefing):
+    """상장 전 · 비상장으로 보이는 티커: 묶음 movers에 없고, 이 티커가 나온 이슈 · 종목 의견 글이 모두 IPO · 비상장 이야기.
+
+    요약 지시문은 비상장사를 '회사명(비상장)'으로 적게 하지만, 상장을 앞둔 회사는 AI가 티커를 지어 넣는다 (11-17 'ANTH')."""
+    movers = {str(m.get("ticker") or "").upper() for m in ((briefing or {}).get("close") or {}).get("movers") or []}
+    ctx = {}
+    for s in items:
+        for it in s.get("issues") or []:
+            txt = " ".join([str(it.get("topic") or ""), *map(str, it.get("lines") or [])])
+            for t in it.get("tickers") or []:
+                ctx.setdefault(str(t).strip().upper(), []).append(txt)
+        for p in s.get("picks") or []:
+            t = str(p.get("ticker") or "").strip().upper()
+            if t:
+                ctx.setdefault(t, []).append(" ".join(str(p.get(k) or "") for k in ("name", "reason", "action")))
+    return {t for t, xs in ctx.items()
+            if t not in movers and xs and all(IPO_CONTEXT.search(x) for x in xs)}
+
+
 def mentioned(t, names, text):
     """티커나 그 종목 이름이 글에 실제로 나왔는가 (AI가 본문에 없는 종목까지 tickers에 넣는다, 11-16 시험)."""
     if re.search(rf"(?<![A-Z]){re.escape(t)}(?![A-Z])", text):
@@ -809,6 +910,8 @@ def compose(day, slot, items, briefing, log=print):
         raise Skip("재료 부족", base)
     ctx = Ctx(day, slot, items, briefing, log)
     log(f"장: {ctx.label} · 중심 사건: {ctx.center['text'] if ctx.center else '없음'}")
+    for n, c in enumerate(ctx.candidates, 1):   # 관전 포인트가 어디서 왔는지 (묶음 일정 · 방송 주제)
+        log(f"  관전 포인트 후보 {n}: {c['text']}")
     base["center"] = {"category": ctx.center["category"], "label": ctx.center["label"],
                       "channels": ctx.center["channels"]} if ctx.center else None
     try:   # 한쪽만 실수로 나가지 않게 어느 호출이든 안 되면 그 편 전체 skip. 센 건수는 남긴다
