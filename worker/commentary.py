@@ -1372,7 +1372,8 @@ def driver_candidates(items, briefing, market, log=None, limit=6):
     """장을 움직인 변수 후보를 점수 순으로. AI는 이 안에서만 변수를 고른다.
 
     방송 이슈의 주제(topic, 자유 문구)를 겹치는 낱말로 묶고, 묶음마다
-    점수 = 다룬 채널 수 ×3 + 방향(오름 · 내림)을 붙인 채널 수 + 영상 수(10까지) + 시장 연결(그날 크게 움직인 종목 · 업종 · 지수).
+    점수 = 다룬 채널 수 ×3 + 시장 · 업종 이야기로 다룬 채널 수 ×2 + 방향(오름 · 내림)을 붙인 채널 수 + 영상 수(10까지)
+           + 시장 연결(그날 크게 움직인 종목 · 업종 · 지수).
     '많이 말한 것'만이 아니라 '시장에서 실제로 움직인 것과 이어진 것'이 앞에 오게 한다."""
     close = (briefing or {}).get("close") or {}
     movers = [m for m in close.get("movers") or [] if _pct(m.get("chg_pct"))]
@@ -1407,8 +1408,10 @@ def driver_candidates(items, briefing, market, log=None, limit=6):
             continue
         k = root(max(mine, key=lambda k: (df[k], k)))
         c = by.setdefault(k, {"keys": Counter(), "topics": Counter(), "channels": set(), "moved": set(), "videos": set(),
-                              "tickers": Counter(), "cats": Counter(), "issues": 0})
+                              "tickers": Counter(), "cats": Counter(), "issues": 0, "wide": set()})
         c["issues"] += 1
+        if it.get("scope") in ("market", "sector"):   # 종목 하나가 아니라 시장 · 업종 이야기로 다룬 채널
+            c["wide"].add(ch)
         c["keys"].update(ks)
         c["topics"][str(it.get("topic")).strip()] += 1
         c["channels"].add(ch)
@@ -1438,11 +1441,12 @@ def driver_candidates(items, briefing, market, log=None, limit=6):
         if not link and idx >= 1 and c["cats"].most_common(1)[0][0] in MACRO:
             bonus += 2
             link.append("지수 전체가 1% 넘게 움직인 날의 거시 변수")
-        score = 3 * len(c["channels"]) + len(c["moved"]) + min(len(c["videos"]), 10) + bonus
+        # 11-17 한국장 시험: 종목 추천(철강 톱픽 · 가스공사 실적)이 '코스피 급락'과 같은 점수 → 시장 · 업종 이야기에 점수를 더 준다
+        score = 3 * len(c["channels"]) + 2 * len(c["wide"]) + len(c["moved"]) + min(len(c["videos"]), 10) + bonus
         tops = [t for t, _ in c["topics"].most_common(3)]
         out.append({"score": round(score, 1), "topic": tops[0], "more": tops[1:], "channels": len(c["channels"]),
                     "videos": sorted(c["videos"]), "link": " · ".join(link)})
-    out.sort(key=lambda c: c["score"], reverse=True)
+    out.sort(key=lambda c: (c["score"], len(c["videos"])), reverse=True)
     out = out[:limit]
     for n, c in enumerate(out, 1):
         c["text"] = (f"{n}. {c['topic']}" + (f" (같이 나온 주제: {', '.join(c['more'])})" if c["more"] else "")
