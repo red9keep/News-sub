@@ -485,6 +485,16 @@ def _clean(x):
     return " ".join(str(x or "").split()).strip()
 
 
+# 원고에 남은 재료 번호 '[영상 39]' · '(영상 25, 26)' (11-17 시험: 근거 끝에 붙고 마침표가 빠짐)
+VIDEO_REF = re.compile(r"\s*[\[(（]\s*영상\s*[\d,\s·~-]+[\])）]")
+
+
+def _sent(x):
+    """본문에 들어갈 한 문장: 재료 번호를 빼고, 끝에 마침표가 없으면 붙인다."""
+    x = _clean(VIDEO_REF.sub("", str(x or "")))
+    return x + "." if x and x[-1] not in ".!?。…" else x
+
+
 def _cut_bytes(s, n):
     b = s.encode("utf-8")
     return s if len(b) <= n else b[:n].decode("utf-8", "ignore").rstrip() + "…"
@@ -519,6 +529,10 @@ def pick_points(raw, candidates):
             continue
         seen.add(n)
         t = candidates[n - 1]["time"]
+        for pre in {t, t.replace("뒤", "후"), t.replace("후", "뒤")} if t else ():
+            if text.startswith(pre):  # '장 마감 뒤 — 장 마감 후 예정된 …' (11-17 시험)
+                text = text[len(pre):].lstrip(" ,·—-")
+                break
         line = f"{t} — {text}" if t else text
         if len(line) <= 45:
             out.append(line)
@@ -529,7 +543,7 @@ def frame_out(raw, ctx):
     """공통 틀 답 → dict. 틀이 어긋나면 ValueError."""
     if not isinstance(raw, dict):
         raise ValueError("JSON 객체가 아님")
-    facts = [_clean(x) for x in raw.get("facts") or [] if _clean(x)]
+    facts = [_sent(x) for x in raw.get("facts") or [] if _sent(x)]
     out = {
         "title_topic": _clean(raw.get("title_topic")).strip("'\"")[:40],
         "summary": _cut_bytes(_clean(raw.get("summary")), 150),
@@ -554,9 +568,9 @@ def view_out(raw, ctx):
         raise ValueError("JSON 객체가 아님")
     out = {
         "heading": _clean(raw.get("heading")).strip("'\"")[:40],
-        "claim": _clean(raw.get("claim")),
-        "evidence": [_clean(x) for x in raw.get("evidence") or [] if _clean(x)][:3],
-        "risk": _clean(raw.get("risk")),
+        "claim": _sent(raw.get("claim")),
+        "evidence": [_sent(x) for x in raw.get("evidence") or [] if _sent(x)][:3],
+        "risk": _sent(raw.get("risk")),
         "facts_used": _ints(raw.get("facts_used")),
         "tickers": raw.get("tickers") or [], "sources": _ints(raw.get("sources")),
     }
@@ -591,7 +605,8 @@ ATTRIBUTED = re.compile(r"(전했다|보도했다|밝혔다|말했다|지적했�
 JUDGMENT_END = re.compile(r"(전망된다|전망이다|보인다|예상된다|평가다|평가된다|기대된다|관측된다|분석된다|풀이된다|"
                           r"여겨진다|판단된다|전망이 나온다)[.。]?$")
 # 말한 사람이 흐린 문장 (11-16 저녁 시험: '전문가들은 … 평가했다')
-VAGUE = re.compile(r"(^|\s)(전문가들|전문가들은|시장에서는|시장 참여자들|업계에서는|일각에서는|투자자들은|분석가들은|애널리스트들은)")
+# 11-17 시험: '외신이 전했다' · '매경TV 뉴스에서 증권가는' · '은행권은'
+VAGUE = re.compile(r"(^|\s)(외신|증권가|은행권|월가|시장 관계자|전문가들|전문가들은|시장에서는|시장 참여자들|업계에서는|일각에서는|투자자들은|분석가들은|애널리스트들은)")
 SENT_SPLIT = re.compile(r"(?<=[.!?。])\s+")
 
 
