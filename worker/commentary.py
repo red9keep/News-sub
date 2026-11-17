@@ -537,7 +537,8 @@ def _common(ctx):
         numbers_rule = " 오늘은 블로그 데이터가 없다. 숫자는 방송에 나온 것만 쓴다."
     return dict(when=f"{ctx.day} {'아침' if ctx.slot == 'am' else '저녁'} 편", what=what,
                 center=ctx.center["text"] if ctx.center else "(정하지 못함 — 가장 많이 다룬 시장 흐름을 중심으로)",
-                rules=RULES.format(numbers_rule=numbers_rule), briefing=ctx.briefing_json or "(없음)",
+                rules=RULES.format(numbers_rule=numbers_rule), numbers_rule=numbers_rule,
+                briefing=ctx.briefing_json or "(없음)",
                 schedule="\n".join(f"- {e['label']}" for e in ctx.schedule) or "(없음)",
                 n=len(ctx.items), span=f"{start:%m-%d %H:%M} ~ {end:%m-%d %H:%M} KST 받음", material=ctx.material)
 
@@ -709,7 +710,7 @@ FORBIDDEN = re.compile(r"매수|매도|과매수|과매도|추천|목표 진입|
                        r"강세론|약세론|칼럼|bullish|bearish|"
                        r"투자\s*기회|매력적|담을\s*만|사\s*둘\s*만|놓치면\s*안|유망", re.I)
 # Q13: 인물 · 회사의 비위 · 사고 주장. 제목에는 금지, 본문은 채널 2곳 이상 또는 묶음 news에 있을 때만
-ALLEGATION = re.compile(r"스캔들|의혹|비리|비위|수사|사임|소송|분식|횡령|배임|기소|사기|소환|조사에 착수|조사하")
+ALLEGATION = re.compile(r"스캔들|의혹|비리|비위|수사|사임|소송|분식|횡령|배임|(?<!경)기소|사기|소환|조사에 착수|조사하")
 ATTRIBUTED = re.compile(r"(전했다|보도했다|밝혔다|말했다|지적했다|주장했다|발표했다|봤다)[.。]?$")
 # 말한 사람 없는 판단으로 끝나는 문장 (11-16 시험: '견고하다는 평가다' · '~로 전망된다')
 JUDGMENT_END = re.compile(r"(전망된다|전망이다|보인다|예상된다|평가다|평가된다|기대된다|관측된다|분석된다|풀이된다|"
@@ -1232,21 +1233,29 @@ def compose(day, slot, items, briefing, log=print):
     }
 
 
-# ---------- 이어 쓰는 글 시험 (11-17 사용자: 칸 채우기 글은 맥락이 없다 → 흐름이 있는 시황으로) ----------
-# 저장하지 않는다. 시험 글을 사용자에게 보여 주고 방향이 정해지면 compose를 이 틀로 바꾼다.
+# ---------- 이어 쓰는 글 (11-17 사용자: 칸 채우기 글은 맥락이 없다 → 흐름이 있는 시황으로) ----------
+# 지금은 시험 모드(--story, 저장 안 함). 블로그와 새 칸 형식을 맞춘 뒤 compose를 이 틀로 바꾼다 (요청 문서 17절).
+# 호출: 글 전체 1번 → 걸린 문장이 있으면 그 문장만 고쳐 쓰게 1번 → 그래도 남으면 그 문장을 문단에서 뺀다.
+
+STORY_MODELS = ["gemini-3.6-flash", *MODELS]   # 11-17 시험: flash-lite는 문단이 얇고 한쪽 시각만 씀
 
 STORY_RULES = """글쓰기 규칙:
-1. 재료에 없는 숫자 · 사건 · 종목은 쓰지 않는다. 지수 · 업종 · 종목 등락 숫자는 블로그 데이터를 먼저 쓴다.
+1. 재료에 없는 숫자 · 사건 · 종목은 쓰지 않는다.{numbers_rule}
 2. 글은 이어지게 쓴다. 문단 안에서 '무슨 일이 있었나 → 왜 그랬나 → 그래서 무엇이 달라지나'가 읽혀야 한다.
    원인 설명('…영향으로', '…때문에')은 재료(방송 · 블로그 데이터 news)에 그렇게 나온 것만 쓴다. 재료에 없는 원인을 지어내지 않는다.
 3. 앞으로의 전망 · 평가는 누가 말했는지 붙인다 ('톰 리(펀드스트랫)는 …라고 봤다'). 사람 · 채널 이름은 문단마다 한두 번이면 된다.
    발언을 줄줄이 늘어놓지 말고, 시장 흐름을 설명하는 근거로 문장 속에 녹인다.
-4. 독자에게 사라 · 팔라 · 기다리라고 권하지 않는다. 매수 · 매도(순매수 · 순매도 포함) · 추천 · 유망 · 매력적 · 투자 기회 ·
-   '대응 전략' 같은 말은 쓰지 않는다. 수급은 '외국인이 사들였다 · 팔았다'로 쓴다.
-5. 실존 인물 · 회사의 비위 · 사고 주장(의혹 · 수사 · 사임 · 소송 등)은 서로 다른 채널 2곳 이상이 다뤘거나 블로그 데이터 news에
-   있을 때만 '~라고 ○○가 전했다'로 쓴다. 제목에는 넣지 않는다.
+   말한 사람 없이 '~로 보인다 · ~할 전망이다 · ~로 예상된다 · ~라는 평가다'로 문장을 끝내지 않는다.
+   다음 장에 미칠 영향은 예측이 아니라 사실로 쓴다 ('…가 한국 반도체주의 변수다', '갈림길은 …이다').
+   '전문가들 · 시장에서는 · 월가는 · 증권가는'처럼 흐린 주어를 쓰지 않는다.
+4. 독자에게 사라 · 팔라 · 기다리라고 권하지 않는다. '…해야 한다 · …할 필요가 있다'로 끝내지 않는다.
+   매수 · 매도(순매수 · 순매도 포함) · 추천 · 유망 · 매력적 · 투자 기회 같은 말은 쓰지 않는다. 수급은 '외국인이 사들였다 · 팔았다'로 쓴다.
+5. 실존 인물 · 회사의 비위 · 사고 주장(스캔들 · 의혹 · 수사 · 사임 · 소송 등)은 서로 다른 채널 2곳 이상이 다뤘거나 블로그 데이터 news에
+   있을 때만 쓰고, 그 문장은 '~라고 ○○(채널 · 매체)가 전했다'로 끝낸다. 제목 · 소제목에는 넣지 않는다.
 6. 자막 문장을 그대로 옮기지 않는다. 사람 이름은 재료에 적힌 전체 이름으로 쓴다.
-7. 독자 말을 쓴다. 분류 코드 · scope · stance · bullish 같은 내부 말은 쓰지 않는다. 종목 이름은 한글, 숫자는 '2.04%' 식.
+7. 쉬운 말로 쓴다. '투심 · 하방 압력 · 유동성 재편 · 차익 실현세 · 견인 · 이중고 · 극대화' 같은 상투어 대신
+   '투자 심리 · 내리는 힘 · 돈이 옮겨 간다 · 이익을 챙기려는 팔자 · 이끌었다'처럼 풀어 쓴다.
+   분류 코드 · scope · stance · bullish 같은 내부 말은 쓰지 않는다. 종목 이름은 한글, 숫자는 '2.04%' 식.
 8. 문장은 모두 '-다'로 끝낸다. 설명이나 머리말 없이 JSON만 출력한다."""
 
 STORY_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 기자입니다. 재료는 아래 방송 요약과 블로그 데이터뿐입니다.
@@ -1255,7 +1264,7 @@ STORY_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 
 이 글이 다루는 장: {label}
 오늘의 중심 사건: {center}
 
-독자는 이 글 하나로 '어제(오늘) 장이 왜 그렇게 움직였고, 다음 장에서 무엇을 봐야 하는지'를 알고 싶어 합니다.
+독자는 이 글 하나로 '장이 왜 그렇게 움직였고, 다음 장에서 무엇을 봐야 하는지'를 알고 싶어 합니다.
 발언 모음이 아니라 한 편의 시황 기사로 씁니다. 먼저 재료에서 장을 움직인 변수 2~3개를 고르고, 그 변수들이 어떻게 이어지는지 정한 뒤 씁니다.
 
 JSON 객체 하나로만 답합니다:
@@ -1263,19 +1272,21 @@ JSON 객체 하나로만 답합니다:
   "title": "제목. 무슨 일로 장이 어떻게 됐는지가 드러나게 (30자 안팎). 예: '금리 인하 기대 꺾이며 기술주 약세, 나스닥 1.2% 내려'",
   "summary": "검색 설명용 한 문장, 45자 안",
   "overview": "한눈에 보기. 3~4문장 한 문단. 지수가 어떻게 끝났고, 무엇이 장을 움직였고, 그 흐름이 다음 장에 어떻게 이어지는지",
-  "market": "지수 · 업종 흐름. 3~5문장 한 문단. 블로그 데이터의 지수 · 업종 · 종목 등락 숫자로, 어디가 많이 내리고(오르고) 어디가 버텼는지",
+  "market": "지수 · 업종 흐름. 3~4문장 한 문단. {market_rule}",
   "drivers": [
     {{"heading": "변수 이름 (15자 안. 예: '실적 발표를 앞둔 경계')",
-      "body": "4~6문장 한 문단. 무슨 일이 있었나 → 왜 시장에 중요한가 → 이 변수를 낙관하는 쪽과 걱정하는 쪽이 각각 무엇을 근거로 드는가(말한 사람을 붙여서) → 어떤 조건에서 어느 쪽으로 기우는가"}}
+      "body": "4~6문장 한 문단. 무슨 일이 있었나 → 왜 시장에 중요한가 → 이 변수를 낙관하는 쪽과 걱정하는 쪽이 각각 무엇을 근거로 드는가(말한 사람을 붙여서. 한쪽만 있으면 한쪽만) → 마지막 문장은 전망이 아니라 다음에 확인될 사실로 끝낸다 (예: '갈림길은 다음 실적 발표에서 나올 가이던스다')"}}
   ],
-  "sectors": [{{"name": "업종 이름", "move": "블로그 데이터의 등락 (예: '−2.39%'). 없으면 빈 문자열", "check": "다음 장에서 볼 것 한 구절 (20자 안)"}}],
-  "checks": ["다음 장에서 확인할 것 2~3줄. 아래 후보와 일정 표에서 고르고, 각 줄은 '무엇을 · 왜 보는지' 한 문장"],
-  "one_line": "오늘의 핵심 한 줄. 권유가 아니라 지금 시장이 어떤 상태인지 한 문장",
+  "sectors": [{{"name": "업종 이름 (블로그 데이터 close.sectors에 적힌 그대로)", "check": "다음 장에서 볼 것 한 구절 (20자 안)"}}],
+  "checks": ["다음 장에서 확인할 것 1~2줄. 아래 후보와 일정 표에서 고른다. 각 줄은 '무엇 — 왜 보는지'를 명사로 끝나는 한 구절로 (예: '엔비디아 실적 — 데이터센터 매출이 예상을 넘는지'). 40자 안"],
+  "one_line": "오늘의 핵심 한 줄. 권유나 예측이 아니라 지금 시장이 어떤 상태인지 한 문장",
   "tickers": ["본문에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
   "sources": [근거로 쓴 영상 번호 (숫자)]
 }}
 
-drivers는 2~3개. 중요한 순서로. 변수끼리 내용이 겹치지 않게 한다. sectors는 3~5개, 블로그 데이터에 있는 업종만 (없으면 빈 배열).
+drivers는 2~3개, 중요한 순서로. 변수끼리 내용이 겹치지 않게 한다. 장과 이어지지 않는 개별 소식은 변수로 삼지 않는다.
+sectors는 3~5개, 블로그 데이터에 있는 업종만 (업종 데이터가 없으면 빈 배열). 등락 숫자는 따로 붙이니 쓰지 않는다.
+checks: {checks_rule}
 
 {rules}
 
@@ -1292,61 +1303,198 @@ drivers는 2~3개. 중요한 순서로. 변수끼리 내용이 겹치지 않게 
 {material}
 """
 
+STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문장에 걸린 점이 있습니다.
 
-def story_markdown(ctx, r):
-    dt = datetime.strptime(ctx.day, "%Y-%m-%d")
-    out = [f"# {dt.month}.{dt.day:02d} 시황 — {_clean(r.get('title'))}", "", f"_{_clean(r.get('summary'))}_", "",
-           "## 한눈에 보기", "", _clean(r.get("overview")), "", "## 지수 · 업종 흐름", ""]
-    if ctx.index_line:
-        out += [f"- {ctx.index_line}", ""]
-    out += [_clean(r.get("market")), "", "## 장을 움직인 변수", ""]
-    for n, d in enumerate(r.get("drivers") or [], 1):
-        out += [f"**{n}. {_clean(d.get('heading'))}**", "", _clean(d.get("body")), ""]
-    secs = [x for x in r.get("sectors") or [] if isinstance(x, dict) and x.get("name")]
-    if secs:
+{problems}
+
+걸린 문장만 고쳐 씁니다. 문단의 앞뒤 문장과 자연스럽게 이어지게 고치고, 나머지 문장과 칸은 그대로 둡니다.
+- 말한 사람 없는 판단: 재료에서 그렇게 말한 사람 · 채널을 붙이거나, 예측을 빼고 사실로 고친다 ('…가 변수다', '갈림길은 …이다')
+- 비위 · 사고 주장: 문장을 '~라고 ○○(채널 · 매체)가 전했다'로 끝낸다. 재료에서 한 곳만 말했으면 그 내용을 빼고 문장을 다시 쓴다
+- 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다
+- 권하는 말투: 명사로 끝나는 구절이나 사실 문장으로 고친다
+같은 틀의 JSON 하나로만 답합니다. '-다'체를 지킨다.
+
+{draft}
+"""
+
+ADVICE_END = re.compile(r"(해야 한다|할 필요가 있다|필요가 있다|주시해야 한다|유효하다|바람직하다)[.。]?$")
+STORY_PARAS = ("overview", "market", "one_line")
+
+
+def story_out(raw, ctx):
+    """AI 답을 다듬는다. 업종 등락은 묶음 숫자로 붙이고, 장 시작 줄과 겹치는 확인 줄은 뺀다."""
+    from difflib import SequenceMatcher
+    if not isinstance(raw, dict):
+        raise ValueError("JSON 객체 아님")
+    out = {k: _clean(raw.get(k)) for k in ("title", "summary", *STORY_PARAS)}
+    out["drivers"] = [{"heading": _clean(d.get("heading")), "body": _clean(d.get("body"))}
+                      for d in raw.get("drivers") or [] if isinstance(d, dict) and _clean(d.get("body"))][:3]
+    moves = {x.get("name"): _pct(x.get("chg_pct")) for x in ((ctx.briefing or {}).get("close") or {}).get("sectors") or []}
+    out["sectors"] = [{"name": _clean(x.get("name")), "move": moves[_clean(x.get("name"))], "check": _clean(x.get("check"))}
+                      for x in raw.get("sectors") or [] if isinstance(x, dict) and moves.get(_clean(x.get("name")))][:5]
+    must = [c for c in ctx.candidates if c["must"]]
+    first = [f"{c['time']} — {c['what']}" if c.get("time") and c.get("what") else c["text"] for c in must]
+    checks = []
+    for x in (_clean(x).rstrip(".") for x in raw.get("checks") or []):
+        if x and "첫 반응" not in x and not any(SequenceMatcher(None, x, f).ratio() >= 0.5 for f in first + checks):
+            checks.append(x)
+    out["first"], out["checks"] = first, checks[:2]
+    out["tickers"] = [str(x) for x in raw.get("tickers") or []]
+    out["sources"] = _ints(raw.get("sources") or [])
+    return out
+
+
+def story_ok(out):
+    if not out["title"] or len(sentences(out["overview"])) < 2 or not out["one_line"]:
+        raise ValueError("제목 · 한눈에 보기 · 핵심 한 줄이 모자람")
+    out["drivers"] = [d for d in out["drivers"] if d["heading"] and len(sentences(d["body"])) >= 3]
+    if len(out["drivers"]) < 2:
+        raise ValueError("변수 문단이 2개가 안 됨")
+    return out
+
+
+def story_problems(out, ctx):
+    """[(문장, 제목인가, [걸린 점])]. 제목 · 소제목은 title 규칙으로 본다."""
+    units = [(out["title"], True)] + [(d["heading"], True) for d in out["drivers"]] + [(out["summary"], False)]
+    units += [(x, False) for k in STORY_PARAS for x in sentences(out[k])]
+    units += [(x, False) for d in out["drivers"] for x in sentences(d["body"])]
+    units += [(x, False) for x in out["checks"]]
+    found = []
+    for s, title in units:
+        p = sentence_problems(s, ctx, title)
+        if not title and ADVICE_END.search(s.strip()) :
+            p.append("독자에게 권하는 말투 ('…해야 한다')")
+        if p:
+            found.append((s, title, p))
+    return found
+
+
+def story_drop(out, found):
+    bad = {s for s, _, _ in found}
+    for k in STORY_PARAS:
+        out[k] = " ".join(x for x in sentences(out[k]) if x not in bad)
+    for d in out["drivers"]:
+        d["body"] = " ".join(x for x in sentences(d["body"]) if x not in bad)
+    out["checks"] = [x for x in out["checks"] if x not in bad]
+    if out["summary"] in bad:
+        out["summary"] = sentences(out["overview"])[0] if out["overview"] else ""
+    return out
+
+
+def story_compose(day, slot, items, briefing, model=None, log=print):
+    """재료 → 이어 쓰는 글 칸. 안 되면 Skip."""
+    if briefing and briefing.get("session") == "closed":
+        raise Skip("휴장")
+    if not items:
+        raise Skip("영상 없음")
+    ctx = Ctx(day, slot, items, briefing, log)
+    log(f"장: {ctx.label} · 중심 사건: {ctx.center['text'] if ctx.center else '없음'}")
+    common = _common(ctx)
+    common["rules"] = STORY_RULES.format(numbers_rule=common["numbers_rule"])
+    cands = "\n".join(f"- {c['text']}" for c in ctx.candidates if not c["must"]) or "(없음)"
+    has_first = any(c["must"] for c in ctx.candidates)
+    market_rule = ("지수 등락 한 줄은 이미 따로 있으니 지수 숫자를 다시 늘어놓지 않는다. 블로그 데이터의 업종 · 종목 등락으로 "
+                   "어디가 많이 움직였고 어디가 버텼는지, 그 차이가 무엇을 말하는지" if ctx.index_line else
+                   "방송에 나온 지수 · 수급 · 업종 숫자로 어디가 많이 움직였고 어디가 버텼는지")
+    checks_rule = ("장 시작 줄(지난밤 장 뒤 첫 반응)은 따로 들어가니 쓰지 않는다. " if has_first else "") + \
+        "다음 장과 이어지지 않는 일정은 고르지 않는다. 고를 것이 없으면 빈 배열."
+    prompt = STORY_PROMPT.format(**common, label=ctx.label, points_title=points_title(day, slot), candidates=cands,
+                                 market_rule=market_rule, checks_rule=checks_rule)
+    last = None
+    for m in dict.fromkeys(([model] if model else []) + STORY_MODELS):
+        config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = m, "off"
+        try:
+            raw = llm.generate_json(prompt, log=log, what=f"이어 쓰는 글 {m}")
+            out = story_ok(story_out(raw, ctx))
+            found = story_problems(out, ctx)
+            if found:
+                log(f"  {m}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함")
+                for x, _, pr in found:
+                    log(f"    - {' · '.join(pr)}: {x}")
+                probs = "\n".join(f'- "{x}" → {" · ".join(pr)}' for x, _, pr in found)
+                raw = llm.generate_json(STORY_FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
+                                        log=log, what=f"이어 쓰는 글 고쳐 쓰기 {m}")
+                out = story_ok(story_out(raw, ctx))
+                found = story_problems(out, ctx)
+                if any(title for _, title, _ in found):
+                    raise ValueError("제목 · 소제목에 걸린 점 남음: " + " · ".join(x for x, t, _ in found if t))
+                for x, _, pr in found:
+                    log(f"    문장 뺌 ({' · '.join(pr)}): {x}")
+                out = story_ok(story_drop(out, found))
+        except llm.LLMError as e:
+            last = f"호출 실패 ({e})"
+        except ValueError as e:
+            last = f"틀 어긋남 ({e})"
+        else:
+            break
+        log(f"  {m}: {last}")
+    else:
+        raise Skip("호출 실패")
+    # 같은 지표 두 값 · 이름 두 표기 (14절 2번 · 7번)
+    paras = [{"body": out["overview"]}, {"body": out["market"]}, *out["drivers"]]
+    _, paras = resolve_conflicts([], paras, ctx, log)
+    out["overview"], out["market"] = paras[0]["body"], paras[1]["body"]
+    texts = [out["title"], out["summary"], out["overview"], out["market"], out["one_line"], *out["checks"],
+             *(x for d in out["drivers"] for x in (d["heading"], d["body"]))]
+    reps = unify_names(texts, log)
+
+    def fix(t):
+        for x, y in reps.items():
+            t = t.replace(x, y)
+        return t
+    text = fix(" ".join(texts + out["first"]))
+    tickers = [t for t in dict.fromkeys(x.strip().upper() for x in out["tickers"])
+               if t in ctx.tickers and mentioned(t, ctx.tickers[t], text)]
+    sources = list(dict.fromkeys(items[n - 1]["id"] for n in out["sources"] if 1 <= n <= len(items)))
+    dt = datetime.strptime(day, "%Y-%m-%d")
+    return {
+        "date": day, "slot": slot, "reason": "", "format": "story", "briefing": f"{day}-{slot}" if briefing else None,
+        "center": {"category": ctx.center["category"], "label": ctx.center["label"],
+                   "channels": ctx.center["channels"]} if ctx.center else None,
+        "title": f"{dt.month}.{dt.day:02d} 시황 — {fix(out['title'])}",
+        "summary": fix(out["summary"]),
+        "overview": fix(out["overview"]),
+        "indexLine": ctx.index_line,
+        "market": fix(out["market"]),
+        "drivers": [{"heading": fix(d["heading"]), "body": fix(d["body"])} for d in out["drivers"]],
+        "sectors": out["sectors"],
+        "pointsTitle": points_title(day, slot),
+        "points": out["first"] + [fix(x) for x in out["checks"]],
+        "oneLine": fix(out["one_line"]),
+        "tickers": tickers, "sources": sources, "model": f"gemini:{m}",
+    }
+
+
+def story_markdown(doc):
+    out = [f"# {doc['title']}", "", f"_{doc['summary']}_", "", "## 한눈에 보기", "", doc["overview"], "",
+           "## 지수 · 업종 흐름", ""]
+    if doc["indexLine"]:
+        out += [f"- {doc['indexLine']}", ""]
+    out += [doc["market"], "", "## 장을 움직인 변수", ""]
+    for n, d in enumerate(doc["drivers"], 1):
+        out += [f"**{n}. {d['heading']}**", "", d["body"], ""]
+    if doc["sectors"]:
         out += ["## 업종별로 볼 것", "", "| 업종 | 등락 | 다음 장에서 볼 것 |", "|---|---|---|"]
-        out += [f"| {_clean(x.get('name'))} | {_clean(x.get('move'))} | {_clean(x.get('check'))} |" for x in secs]
+        out += [f"| {x['name']} | {x['move']} | {x['check']} |" for x in doc["sectors"]]
         out.append("")
-    out += [f"## {points_title(ctx.day, ctx.slot)}", ""]
-    must = [c["text"] for c in ctx.candidates if c["must"]]
-    out += [f"- {x}" for x in must + [_clean(x) for x in r.get("checks") or []]]
-    out += ["", f"**핵심 한 줄** — {_clean(r.get('one_line'))}", ""]
+    out += [f"## {doc['pointsTitle']}", ""] + [f"- {x}" for x in doc["points"]]
+    out += ["", f"**핵심 한 줄** — {doc['oneLine']}", "", f"종목: {' · '.join(doc['tickers'])}", f"모델: {doc['model']}"]
     return "\n".join(out)
 
 
 def story(day, slot, model=None, log=print):
-    """이어 쓰는 글 시험. 저장하지 않고 글과 걸린 문장 목록만 출력."""
+    """이어 쓰는 글 시험. 저장하지 않고 글만 출력."""
     start, end = window(day, slot)
     items = load_summaries(start, end)
     briefing = load_briefing(day, slot, log)
     log(f"이어 쓰는 글 시험 {day}-{slot}: 재료 영상 {len(items)}개, 묶음 {'있음' if briefing else '없음'}")
-    ctx = Ctx(day, slot, items, briefing, log)
-    common = _common(ctx)
-    common["rules"] = STORY_RULES
-    cands = "\n".join(f"- {c['text']}" for c in ctx.candidates if not c["must"]) or "(없음)"
-    prompt = STORY_PROMPT.format(**common, label=ctx.label, points_title=points_title(day, slot), candidates=cands)
-    for m in ([model] if model else []) + MODELS:
-        config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = m, "off"
-        try:
-            r = llm.generate_json(prompt, log=log, what=f"이어 쓰는 글 {m}")
-            if not isinstance(r, dict) or not r.get("overview") or not r.get("drivers"):
-                raise ValueError("overview · drivers 비어 있음")
-        except (llm.LLMError, ValueError) as e:
-            log(f"  {m}: 안 됨 ({e})")
-            continue
-        md = story_markdown(ctx, r)
-        print(f"\n===== 이어 쓰는 글 ({m}) =====\n{md}\n===== 끝 =====\n")
-        texts = [(True, _clean(r.get("title")))] + [(False, x) for k in ("overview", "market", "one_line")
-                                                     for x in sentences(_clean(r.get(k)))]
-        texts += [(False, x) for d in r.get("drivers") or [] for x in sentences(_clean(d.get("body")))]
-        texts += [(False, _clean(x)) for x in r.get("checks") or []]
-        for title, s in texts:   # 지금 검사로 걸리는 문장 (빼지 않고 보여 주기만)
-            p = sentence_problems(s, ctx, title)
-            if p:
-                log(f"  걸림 ({' · '.join(p)}): {s}")
-        return r
-    log("모든 모델이 안 됨")
-    return None
+    try:
+        doc = story_compose(day, slot, items, briefing, model, log)
+    except Skip as e:
+        log(f"건너뜀: {e.args[0]}")
+        return None
+    print(f"\n===== 이어 쓰는 글 =====\n{story_markdown(doc)}\n===== 끝 =====\n")
+    return doc
 
 
 def save(key, doc, log=print):
