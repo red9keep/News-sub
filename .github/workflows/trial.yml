@@ -7,6 +7,8 @@ name: trial
 #   summarize : 이전 captions 실행의 자막 파일(run_id)을 요약만 한다 (VPN · 유튜브 요청 없음)
 #   llm-models: Gemini · NVIDIA Build API가 지금 제공하는 모델 ID 목록을 찍는다 (모델이 없어진 404 · 410 오류 대응)
 #   transcribe: videos 영상들을 models 모델마다 Gemini로 받아써 비교한다 (VPN · 유튜브 요청 없음)
+#   home-ip   : AlphaScope 가 GitHub 주소로 막히는 세 곳(국민연금 · 미래에셋 TIGER · substack)을 바로 · 집 IP 로 비교하고,
+#               접속 2개를 동시에 열어 공유기가 서로 끊지 않는지 본다 (2026-11-17, scripts/probe_home_ip.sh)
 #   picks     : Firestore에 저장된 자막을 다시 요약해 종목 의견만 찍는다 (channels · hours 또는 videos). save면 picks만 저장
 # videos 입력을 주면 captions가 채널 목록 대신 그 영상들만 받는다 (요약 없음). player_client · player_skip은 yt-dlp 설정 시험용
 # provider 입력을 주면 그 실행만 해당 제공자(gemini · nvidia)로 요약 · 걸러내기를 한다. 비우면 변수 LLM_PROVIDER
@@ -16,7 +18,7 @@ on:
       mode:
         description: "시험 종류"
         type: choice
-        options: [count, vpn-only, captions, summarize, llm-models, transcribe, picks, notify, channels, prices, feed]
+        options: [count, vpn-only, home-ip, captions, summarize, llm-models, transcribe, picks, notify, channels, prices, feed]
         default: count
       runner:
         description: "러너 (VPN swanctl 시험용, 11-13). ubuntu-latest는 26.04"
@@ -88,12 +90,17 @@ jobs:
     # 기본 24.04. trial은 swanctl 판 vpn-up.sh라 26.04(ubuntu-latest)에서도 시험한다 (11-13)
     runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
     timeout-minutes: 90
+    # home-ip 만 접속 2개를 동시에 연다(공유기 L2TP 동시 접속 시험). 나머지 모드는 1개
+    strategy:
+      fail-fast: false
+      matrix:
+        conn: ${{ fromJSON(inputs.mode == 'home-ip' && '[1,2]' || '[1]') }}
     steps:
       - uses: actions/checkout@v4
 
       - name: 집 공유기 VPN 연결
         id: vpn
-        if: inputs.mode == 'vpn-only' || inputs.mode == 'captions'
+        if: inputs.mode == 'vpn-only' || inputs.mode == 'captions' || inputs.mode == 'home-ip'
         # Ubuntu 26.04 sudo는 -E를 무시한다 (11-11부터 Secret이 빈 값으로 넘어가 VPN 실패). 필요한 변수만 직접 넘긴다
         run: sudo env VPN_SERVER="$VPN_SERVER" VPN_PSK="$VPN_PSK" VPN_USER="$VPN_USER" VPN_PASSWORD="$VPN_PASSWORD" GITHUB_OUTPUT="$GITHUB_OUTPUT" bash scripts/vpn-up.sh
         env:
@@ -102,8 +109,15 @@ jobs:
           VPN_USER: ${{ secrets.VPN_USER }}
           VPN_PASSWORD: ${{ secrets.VPN_PASSWORD }}
 
+      - name: 막힌 세 곳 — 바로 · 집 IP 비교
+        if: inputs.mode == 'home-ip'
+        run: bash scripts/probe_home_ip.sh "${{ steps.vpn.outputs.ip }}"
+        env:
+          CONN: ${{ matrix.conn }}
+          HOLD: "90"
+
       - uses: actions/setup-python@v5
-        if: inputs.mode != 'vpn-only'
+        if: inputs.mode != 'vpn-only' && inputs.mode != 'home-ip'
         with:
           python-version: "3.11"
 
