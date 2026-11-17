@@ -1064,7 +1064,7 @@ def mentioned(t, names, text):
 # ---------- 한 편 ----------
 
 # 14절 2번: 한 글 안 같은 지표 두 값 (11-16 저녁: 신용잔고 '20조 원' · '25조 7,729억 원')
-INDICATORS = {"신용잔고": ("신용잔고", "신용 잔고", "신용거래융자", "신용융자"), "마이너스 통장": ("마이너스 통장", "마이너스통장"),
+INDICATORS = {"신용잔고": ("신용잔고", "신용 잔고", "신용거래융자", "신용거래 융자", "신용융자", "신용 융자"), "마이너스 통장": ("마이너스 통장", "마이너스통장"),
               "예탁금": ("예탁금",), "PBR": ("PBR",), "PER": ("PER",), "VIX": ("VIX",), "환율": ("환율",),
               "국채 금리": ("국채 금리", "국채 10년", "10년물"), "유가": ("유가", "WTI", "브렌트")}
 AMOUNT = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(조)(?:\s*(\d[\d,]*)\s*억)?|(\d[\d,]*(?:\.\d+)?)\s*(억|%|배|포인트|선|달러|원)")
@@ -1094,7 +1094,7 @@ def indicator_values(text):
     return out
 
 
-def resolve_conflicts(facts, views, ctx, log):
+def resolve_conflicts(facts, views, ctx, log, protect=True):
     """같은 지표가 다른 값으로 나오면 재료(묶음 · 채널)에서 더 많이 받친 값만 남기고, 다른 값이 든 문장을 뺀다.
 
     같으면 사실 칸에 있는 값을 남긴다. 장 줄(사실 첫 줄) · 주장(본문 첫 문장) · 틀리는 조건(끝 문장)은 빼지 않고 로그만."""
@@ -1124,8 +1124,8 @@ def resolve_conflicts(facts, views, ctx, log):
             for p in ps:
                 if abs(p[2] - keep) > abs(keep) * 0.05:
                     where = p[4]
-                    fixed = (where[0] == "facts" and where[1] == 0) or (
-                        where[0] == "view" and where[2] in (0, len(sentences(views[where[1]]["body"])) - 1))
+                    fixed = protect and ((where[0] == "facts" and where[1] == 0) or (
+                        where[0] == "view" and where[2] in (0, len(sentences(views[where[1]]["body"])) - 1)))
                     log(f"같은 지표 두 값: {name} '{p[3]}' (남길 값 쪽 재료 {support(keep)}곳 · 이 값 {support(p[2])}곳)"
                         + (" → 장 줄 · 주장 · 조건 문장이라 둠" if fixed else " → 그 문장 뺌"))
                     if not fixed:
@@ -1241,6 +1241,7 @@ STORY_MODELS = ["gemini-3.6-flash", *MODELS]   # 11-17 시험: flash-lite는 문
 
 STORY_RULES = """글쓰기 규칙:
 1. 재료에 없는 숫자 · 사건 · 종목은 쓰지 않는다.{numbers_rule}
+   같은 지표(신용잔고 · 환율 등)의 값이 재료마다 다르면 더 많은 재료가 받치는 값 하나만 쓴다.
 2. 글은 이어지게 쓴다. 문단 안에서 '무슨 일이 있었나 → 왜 그랬나 → 그래서 무엇이 달라지나'가 읽혀야 한다.
    원인 설명('…영향으로', '…때문에')은 재료(방송 · 블로그 데이터 news)에 그렇게 나온 것만 쓴다. 재료에 없는 원인을 지어내지 않는다.
 3. 앞으로의 전망 · 평가는 누가 말했는지 붙인다 ('톰 리(펀드스트랫)는 …라고 봤다'). 사람 · 채널 이름은 문단마다 한두 번이면 된다.
@@ -1259,6 +1260,7 @@ STORY_RULES = """글쓰기 규칙:
 8. 문장은 모두 '-다'로 끝낸다. 설명이나 머리말 없이 JSON만 출력한다."""
 
 STORY_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 기자입니다. 재료는 아래 방송 요약과 블로그 데이터뿐입니다.
+기사 문체로 씁니다: 모든 문장을 '-다'로 끝냅니다 ('내렸다', '변수다'). '-습니다 · -입니다'는 쓰지 않습니다.
 
 이번 글: {when}. {what}
 이 글이 다루는 장: {label}
@@ -1275,7 +1277,7 @@ JSON 객체 하나로만 답합니다:
   "market": "지수 · 업종 흐름. 3~4문장 한 문단. {market_rule}",
   "drivers": [
     {{"heading": "변수 이름 (15자 안. 예: '실적 발표를 앞둔 경계')",
-      "body": "4~6문장 한 문단. 무슨 일이 있었나 → 왜 시장에 중요한가 → 이 변수를 낙관하는 쪽과 걱정하는 쪽이 각각 무엇을 근거로 드는가(말한 사람을 붙여서. 한쪽만 있으면 한쪽만) → 마지막 문장은 전망이 아니라 다음에 확인될 사실로 끝낸다 (예: '갈림길은 다음 실적 발표에서 나올 가이던스다')"}}
+      "body": "4~6문장 한 문단. 무슨 일이 있었나 → 왜 시장에 중요한가 → 이 변수를 낙관하는 쪽과 걱정하는 쪽이 각각 무엇을 근거로 드는가(말한 사람을 붙여서. 한쪽만 있으면 한쪽만) → 마지막 문장은 전망이 아니라 이 변수에서 다음에 확인될 사실(일정 · 숫자)로 끝낸다. 변수마다 같은 말로 시작하지 않는다"}}
   ],
   "sectors": [{{"name": "업종 이름 (블로그 데이터 close.sectors에 적힌 그대로)", "check": "다음 장에서 볼 것 한 구절 (20자 안)"}}],
   "checks": ["다음 장에서 확인할 것 1~2줄. 아래 후보와 일정 표에서 고른다. 각 줄은 '무엇 — 왜 보는지'를 명사로 끝나는 한 구절로 (예: '엔비디아 실적 — 데이터센터 매출이 예상을 넘는지'). 40자 안"],
@@ -1312,12 +1314,14 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
 - 비위 · 사고 주장: 문장을 '~라고 ○○(채널 · 매체)가 전했다'로 끝낸다. 재료에서 한 곳만 말했으면 그 내용을 빼고 문장을 다시 쓴다
 - 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다
 - 권하는 말투: 명사로 끝나는 구절이나 사실 문장으로 고친다
+- '-다'체가 아님: 그 문장을 '-다'로 끝나게 고친다. 걸리지 않은 문장에도 '-습니다'가 있으면 모두 '-다'로 고친다
 같은 틀의 JSON 하나로만 답합니다. '-다'체를 지킨다.
 
 {draft}
 """
 
 ADVICE_END = re.compile(r"(해야 한다|할 필요가 있다|필요가 있다|주시해야 한다|유효하다|바람직하다)[.。]?$")
+POLITE_END = re.compile(r"(습니다|입니다|됩니다|합니다|ㅂ니다|니다)[.。]?$")
 STORY_PARAS = ("overview", "market", "one_line")
 
 
@@ -1362,7 +1366,9 @@ def story_problems(out, ctx):
     found = []
     for s, title in units:
         p = sentence_problems(s, ctx, title)
-        if not title and ADVICE_END.search(s.strip()) :
+        if POLITE_END.search(s.strip()):
+            p.append("'-다'체가 아님 ('-습니다 · -입니다'를 '-다'로)")
+        if not title and ADVICE_END.search(s.strip()):
             p.append("독자에게 권하는 말투 ('…해야 한다')")
         if p:
             found.append((s, title, p))
@@ -1432,7 +1438,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
         raise Skip("호출 실패")
     # 같은 지표 두 값 · 이름 두 표기 (14절 2번 · 7번)
     paras = [{"body": out["overview"]}, {"body": out["market"]}, *out["drivers"]]
-    _, paras = resolve_conflicts([], paras, ctx, log)
+    _, paras = resolve_conflicts([], paras, ctx, log, protect=False)
     out["overview"], out["market"] = paras[0]["body"], paras[1]["body"]
     texts = [out["title"], out["summary"], out["overview"], out["market"], out["one_line"], *out["checks"],
              *(x for d in out["drivers"] for x in (d["heading"], d["body"]))]
