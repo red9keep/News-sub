@@ -1318,6 +1318,7 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
 - 말한 사람이 흐림: '외신 · 증권가 · 투자자들은' 대신 재료의 이름 · 채널을 쓰거나, 주어를 사실(지수 · 종목 · 기관)로 바꾼다
 - 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다
 - 권하는 말투: 명사로 끝나는 구절이나 사실 문장으로 고친다
+- 상투어: 같은 뜻의 쉬운 말로 풀어 쓴다
 - '-다'체가 아님: 그 문장을 '-다'로 끝나게 고친다. 걸리지 않은 문장에도 '-습니다'가 있으면 모두 '-다'로 고친다
 같은 틀의 JSON 하나로만 답합니다. '-다'체를 지킨다.
 
@@ -1325,6 +1326,18 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
 """
 
 ADVICE_END = re.compile(r"(해야 한다|할 필요가 있다|필요가 있다|주시해야 한다|유효하다|바람직하다)[.。]?$")
+PLAIN = {"하방 압력": "내리는 힘", "하방 압박": "내리는 힘", "투심": "투자 심리", "팔자세": "팔자", "사자세": "사자",
+         "매도세": "팔자", "매수세": "사자", "매도 물량": "파는 물량", "디위스킹": "위험 줄이기", "디리스킹": "위험 줄이기",
+         "밸류에이션": "주가 수준", "모멘텀": "동력", "펀더멘털": "기초 체력"}
+CLICHE = re.compile(r"유동성 재편|차익 실현세|이중고|극대화|면치 못했다|직격탄|온도 차|옥석 가리기|불가피하다")
+
+
+def plain(t):
+    for a, b in PLAIN.items():
+        t = t.replace(a, b)
+    return t
+
+
 POLITE_END = re.compile(r"(습니다|입니다|됩니다|합니다|ㅂ니다|니다)[.。]?$")
 STORY_PARAS = ("overview", "market", "one_line")
 
@@ -1334,16 +1347,16 @@ def story_out(raw, ctx):
     from difflib import SequenceMatcher
     if not isinstance(raw, dict):
         raise ValueError("JSON 객체 아님")
-    out = {k: _clean(raw.get(k)) for k in ("title", "summary", *STORY_PARAS)}
-    out["drivers"] = [{"heading": _clean(d.get("heading")), "body": _clean(d.get("body"))}
+    out = {k: plain(_clean(raw.get(k))) for k in ("title", "summary", *STORY_PARAS)}
+    out["drivers"] = [{"heading": plain(_clean(d.get("heading"))), "body": plain(_clean(d.get("body")))}
                       for d in raw.get("drivers") or [] if isinstance(d, dict) and _clean(d.get("body"))][:3]
     moves = {x.get("name"): _pct(x.get("chg_pct")) for x in ((ctx.briefing or {}).get("close") or {}).get("sectors") or []}
-    out["sectors"] = [{"name": _clean(x.get("name")), "move": moves[_clean(x.get("name"))], "check": _clean(x.get("check"))}
+    out["sectors"] = [{"name": _clean(x.get("name")), "move": moves[_clean(x.get("name"))], "check": plain(_clean(x.get("check")))}
                       for x in raw.get("sectors") or [] if isinstance(x, dict) and moves.get(_clean(x.get("name")))][:5]
     must = [c for c in ctx.candidates if c["must"]]
     first = [f"{c['time']} — {c['what']}" if c.get("time") and c.get("what") else c["text"] for c in must]
     checks = []
-    for x in (_clean(x).rstrip(".") for x in raw.get("checks") or []):
+    for x in (plain(_clean(x)).rstrip(".") for x in raw.get("checks") or []):
         if x and "첫 반응" not in x and not any(SequenceMatcher(None, x, f).ratio() >= 0.5 for f in first + checks):
             checks.append(x)
     out["first"], out["checks"] = first, checks[:2]
@@ -1366,7 +1379,7 @@ def story_problems(out, ctx):
     units = [(out["title"], True)] + [(d["heading"], True) for d in out["drivers"]] + [(out["summary"], False)]
     units += [(x, False) for k in STORY_PARAS for x in sentences(out[k])]
     units += [(x, False) for d in out["drivers"] for x in sentences(d["body"])]
-    units += [(x, False) for x in out["checks"]]
+    units += [(x, False) for x in out["checks"]] + [(x["check"], False) for x in out["sectors"]]
     found = []
     for s, title in units:
         p = sentence_problems(s, ctx, title)
@@ -1374,6 +1387,14 @@ def story_problems(out, ctx):
             p.append("'-다'체가 아님 ('-습니다 · -입니다'를 '-다'로)")
         if not title and ADVICE_END.search(s.strip()):
             p.append("독자에게 권하는 말투 ('…해야 한다')")
+        m = CLICHE.search(s)
+        if m and not p:
+            p.append(f"{SOFT}상투어 '{m.group()}'를 쉬운 말로")
+        x = bad_number(s, ctx.numbers)
+        if x and x.rstrip("%").replace(".", "").replace("e+", "").isdigit():   # 왜 걸렸는지 보게 가까운 재료 숫자를 같이 적는다
+            import summarize
+            kind = "%" if x.endswith("%") else "n"
+            p.append(f"{SOFT}(재료의 가까운 숫자: {summarize._near(kind, float(x.rstrip('%')), ctx.numbers)})")
         if p:
             found.append((s, title, p))
     return found
@@ -1386,6 +1407,7 @@ def story_drop(out, found):
     for d in out["drivers"]:
         d["body"] = " ".join(x for x in sentences(d["body"]) if x not in bad)
     out["checks"] = [x for x in out["checks"] if x not in bad]
+    out["sectors"] = [x for x in out["sectors"] if x["check"] not in bad]
     if out["summary"] in bad:
         out["summary"] = sentences(out["overview"])[0] if out["overview"] else ""
     return out
@@ -1428,6 +1450,10 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                                         log=log, what=f"이어 쓰는 글 고쳐 쓰기 {m}")
                 out = story_ok(story_out(raw, ctx))
                 found = story_problems(out, ctx)
+            for x, _, pr in found:
+                if all(y.startswith(SOFT) for y in pr):
+                    log(f"    그대로 둠 ({' · '.join(pr)}): {x}")
+            found = [f for f in found if not all(y.startswith(SOFT) for y in f[2])]
             if found:
                 if any(title for _, title, _ in found):
                     raise ValueError("제목 · 소제목에 걸린 점 남음: " + " · ".join(x for x, t, _ in found if t))
