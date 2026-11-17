@@ -101,7 +101,7 @@ def load_briefing(day, slot, log=print):
     except ValueError:
         log("묶음 파일이 JSON이 아님 → 방송만으로")
         return None
-    if b.get("date") != day or b.get("slot") != slot or not str(b.get("generated") or "").startswith(day):
+    if b.get("date") != day or b.get("slot") != slot:   # 14절 Q18: ahead 묶음은 generated가 이틀 전이라 date만 본다
         log(f"묶음 파일이 그날 것이 아님 (date {b.get('date')}, generated {b.get('generated')}) → 방송만으로")
         return None
     return b
@@ -249,15 +249,85 @@ def center_event(items, briefing, market, log=None):
     }
 
 
-def point_candidates(items, briefing, next_market, limit_topics=4):
+WEEKDAY = "월화수목금토일"
+
+
+def rel_day(us_day, day):
+    """미국 날짜 us_day를 한국 독자(그 편 날짜 day에 읽음) 말로: 오늘 밤 · 내일 밤 · 11월 19일(목) 밤."""
+    try:
+        u = datetime.strptime(us_day, "%Y-%m-%d").date()
+        d = datetime.strptime(day, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return ""
+    n = (u - d).days
+    return {0: "오늘 밤", 1: "내일 밤"}.get(n, f"{u.month}월 {u.day}일({WEEKDAY[u.weekday()]}) 밤")
+
+
+def date_words(us_day, day, after_close=False):
+    """그 일정에 써도 되는 날짜 말 (14절 1번: 본문 '다음 주 엔비디아 실적' ↔ 실제는 그날 밤)."""
+    u = datetime.strptime(us_day, "%Y-%m-%d").date()
+    d = datetime.strptime(day, "%Y-%m-%d").date()
+    n = (u - d).days
+    ok = set()
+    if n == 0:
+        ok |= {"오늘", "오늘 밤"} | ({"내일"} if after_close else set())
+    elif n == 1:
+        ok |= {"내일", "내일 밤"} | ({"모레"} if after_close else set())
+    elif n == 2:
+        ok |= {"모레"}
+    wk = u.isocalendar()[1] - d.isocalendar()[1] + 52 * (u.isocalendar()[0] - d.isocalendar()[0])
+    ok |= {0: {"이번 주"}, 1: {"다음 주"}}.get(wk, set())
+    return ok
+
+
+DATE_WORDS = ("다음 주", "이번 주", "오늘", "내일", "모레", "다음 달")
+KIND_NAME = {"CLAIMS": ("신규 실업수당 청구", ["실업수당"]), "GDP": ("GDP", ["GDP"]), "PCE": ("PCE 물가", ["PCE"]),
+             "OPEX": ("옵션 만기", ["옵션 만기"]), "CPI": ("소비자물가(CPI)", ["CPI", "소비자물가"]),
+             "PPI": ("생산자물가(PPI)", ["PPI", "생산자물가"]), "FOMC": ("FOMC", ["FOMC", "연준 회의", "금리 결정"]),
+             "JOBS": ("고용 보고서", ["고용 보고서", "비농업"]), "NFP": ("고용 보고서", ["고용 보고서", "비농업"]),
+             "RETAIL": ("소매판매", ["소매판매"])}
+
+
+def schedule(day, briefing, names):
+    """묶음 calendar → [{name, keys, label, ok}] (파이썬이 날짜 말을 정해 재료로 준다 · 본문 날짜 말을 대조한다)."""
+    out = []
+    for x in ((briefing or {}).get("calendar") or {}).get("items") or []:
+        k, us_day = str(x.get("kind") or "").upper(), x.get("day")
+        if not us_day:
+            continue
+        if k == "EARNINGS":
+            sym = str(x.get("symbol") or "").upper()
+            nm = sorted(names.get(sym) or [], key=len)
+            name, keys = f"{nm[0] if nm else sym} 실적", [sym, *nm]
+        elif k in KIND_NAME:
+            name, keys = KIND_NAME[k]
+        else:
+            continue
+        try:
+            ok = date_words(us_day, day, bool(x.get("after_close")))
+        except ValueError:
+            continue
+        u = datetime.strptime(us_day, "%Y-%m-%d")
+        label = (f"{name}: 미국 {u.month}월 {u.day}일({WEEKDAY[u.weekday()]}){' 장 마감 뒤' if x.get('after_close') else ''}"
+                 f" — 한국 독자에게는 '{rel_day(us_day, day)}'" + (f", 써도 되는 날짜 말: {' · '.join(sorted(ok))}" if ok else ""))
+        out.append({"name": name, "keys": [k for k in keys if k], "label": label, "ok": ok})
+    return out
+
+
+def point_candidates(items, briefing, next_market, limit_topics=4, day=None):
     """관전 포인트 후보: 묶음 next_session 일정 + 방송에서 많이 나온 주제 (2-2절). AI는 이 중에서만 고른다.
 
     묶음의 장 시작 줄('… 첫 반응', Q16)은 must → 늘 첫 관전 포인트. 방송 주제는 다음 장 나라(또는 나라 없음) 이슈만."""
     out = []   # [{"text", "time", "must"}]
     for x in ((briefing or {}).get("next_session") or {}).get("items") or []:
         t, w = str(x.get("time") or "").strip(), str(x.get("what") or "").strip()
+        kind = x.get("kind")
+        must = kind == "open" if kind else "첫 반응" in w   # 14절 Q17: 장 시작 줄은 kind로 알아본다
+        if kind == "event" and x.get("us_day") and day:   # 14절 1번: '장 마감 뒤' → '오늘 밤 미국 장 마감 뒤'
+            r = rel_day(x["us_day"], day)
+            t = f"{r} 미국 {t}".strip() if r else t
         if w:
-            out.append({"text": f"{t} {w}" if t else w, "time": t, "what": w, "must": "첫 반응" in w})
+            out.append({"text": f"{t} {w}" if t else w, "time": t, "what": w, "must": must})
     topics, cats = Counter(), Counter()
     for s in items:
         issues = [it for it in s.get("issues") or []
@@ -319,8 +389,11 @@ class Ctx:
         self.label = session_label(day, slot, briefing)
         self.index_line = index_line(session_label(day, slot, briefing, plain=True), briefing)
         self.center = center_event(items, briefing, self.market, log)
-        self.candidates = point_candidates(items, briefing, self.next)
+        self.candidates = point_candidates(items, briefing, self.next, day=day)
         self.tickers = known_tickers(items, briefing)
+        self.schedule = schedule(day, briefing, self.tickers)
+        m = re.search(r"주로 나온 주제: ([^.]*)", self.center["text"]) if self.center else None
+        self.center_keys = keys_of((m.group(1) if m else "") + " " + (self.center["label"] if self.center else ""))
         for t in unlisted_tickers(items, briefing):   # 11-17 시험: 상장 전 앤트로픽 'ANTH'
             if t in self.tickers:
                 del self.tickers[t]
@@ -404,6 +477,9 @@ JSON 객체 하나로만 답합니다:
 관전 포인트 후보 ({points_title}):
 {candidates}
 
+일정 표 (파이썬이 계산함. 일정의 날짜 말은 이 표대로만 쓰고, 표에 없는 일정에는 오늘 · 내일 · 이번 주 · 다음 주 같은 날짜 말을 붙이지 않는다):
+{schedule}
+
 블로그 데이터 (묶음 파일):
 {briefing}
 
@@ -430,13 +506,16 @@ JSON 객체 하나로만 답합니다:
   "heading": "{side} 쪽 시각의 제목. 이유와 방향을 함께 말한다 (예: 'AI 투자, 실적이 받쳐 준다', '금리 부담에 비싸진 주가'). 25자 안",
   "claim": "주장 한 문장. 중심 사건을 {side} 쪽에서 본 것. 우리 판단이 아니라 시각임이 드러나게 끝낸다 (예: '…라고 보는 쪽이다', '…라는 시각이다')",
   "evidence": ["근거 2~3개, 한 문장씩. 근거마다 말한 사람이나 채널을 붙인다 (예: 'CNBC에서 ○○는 …라고 봤다')"],
-  "risk": "이 시각이 틀리는 조건 한 문장, 사실로 쓴다. 위 근거로 든 사건 · 숫자가 뒤집히는 조건으로 (예: '다음 주 엔비디아 실적에서 데이터센터 매출이 줄면 이 시각은 힘을 잃는다')",
+  "risk": "이 시각이 틀리는 조건 한 문장, 사실로 쓴다. 위 근거로 든 사건 · 숫자가 뒤집히는 조건으로 늘 '…면 이 시각은 힘을 잃는다.'로 끝낸다 (예: '엔비디아 실적에서 데이터센터 매출이 줄면 이 시각은 힘을 잃는다.')",
   "facts_used": [위 공통 사실 가운데 이 시각의 근거와 이어지는 번호],
   "tickers": ["본문에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
   "sources": [근거로 쓴 영상 번호 (숫자). 방송에서 가져온 숫자가 있으면 그 영상은 꼭 넣는다]
 }}
 
 {rules}
+
+일정 표 (파이썬이 계산함. 일정의 날짜 말은 이 표대로만 쓰고, 표에 없는 일정에는 오늘 · 내일 · 이번 주 · 다음 주 같은 날짜 말을 붙이지 않는다):
+{schedule}
 
 블로그 데이터 (묶음 파일):
 {briefing}
@@ -459,6 +538,7 @@ def _common(ctx):
     return dict(when=f"{ctx.day} {'아침' if ctx.slot == 'am' else '저녁'} 편", what=what,
                 center=ctx.center["text"] if ctx.center else "(정하지 못함 — 가장 많이 다룬 시장 흐름을 중심으로)",
                 rules=RULES.format(numbers_rule=numbers_rule), briefing=ctx.briefing_json or "(없음)",
+                schedule="\n".join(f"- {e['label']}" for e in ctx.schedule) or "(없음)",
                 n=len(ctx.items), span=f"{start:%m-%d %H:%M} ~ {end:%m-%d %H:%M} KST 받음", material=ctx.material)
 
 
@@ -690,6 +770,22 @@ def bad_day(s, ctx):
     return None
 
 
+FACT_OPINION = re.compile(r"(분석했다|봤다|보았다|평가했다|전망했다|언급했다|주장했다|예상했다|진단했다|해석했다)[.。]?$")
+FACT_CAUSE = re.compile(r"여파로|때문에|영향으로|탓에|탓으로|에 따른|으로 인해|로 인해")
+RISK_END = re.compile(r"힘을 잃는다[.。]?$")
+OTHER_MARKET = {"US": re.compile(r"한국은행|금통위|코스피|코스닥|한국장"), "KR": None}
+
+
+def bad_when(s, ctx):
+    """일정 표에 있는 일정을 다른 날짜 말로 쓴 것 (14절 1번)."""
+    for e in ctx.schedule:
+        if any(k in s for k in e["keys"]):
+            for w in DATE_WORDS:
+                if w in s and w not in e["ok"]:
+                    return f"'{e['name']}' 날짜 말 '{w}'가 일정과 다름 ({e['label']})"
+    return None
+
+
 def keys_of(text):
     out = set()
     for t in re.findall(r"[가-힣A-Za-z][가-힣A-Za-z0-9&]+", text):
@@ -735,10 +831,32 @@ def sentence_problems(s, ctx, title):
     x = bad_day(s, ctx)
     if x:
         out.append(f"재료에 없는 날짜 {x}")
+    x = bad_when(s, ctx)
+    if x:
+        out.append(x)
     if not title:
         h = half_name(s, ctx)
         if h:
             out.append(f"이름이 반쪽 ('{h[0]}' → 재료에 나온 '{h[1]}'처럼 전체 이름으로)")
+    return out
+
+
+def key_problems(key, s, ctx):
+    """칸마다 따로 보는 것: 사실 칸 의견 · 원인(3번), 근거의 중심 사건(4번), 관전 포인트 나라(5번)."""
+    out = []
+    if key == "facts":
+        if FACT_OPINION.search(s.strip()):
+            out.append("사실 칸에 의견 (말한 사람의 판단은 시각 쪽 몫)")
+        m = FACT_CAUSE.search(s)
+        if m:
+            out.append(f"사실 칸에 원인 풀이 '{m.group()}'")
+    elif key == "evidence" and ctx.center_keys and not any(k in s for k in ctx.center_keys):
+        out.append(SOFT + "근거에 중심 사건 이야기가 없음")
+    elif key == "points":
+        r = OTHER_MARKET.get(ctx.next)
+        m = r.search(s) if r else None
+        if m:
+            out.append(f"다음 장과 다른 나라 일정 '{m.group()}'")
     return out
 
 
@@ -758,8 +876,16 @@ def find_problems(kind, out, ctx):
     for key, i, text, title in units(kind, out):
         for s in [text] if title or key == "points" else sentences(text):
             p = sentence_problems(s, ctx, title)
+            p = p + key_problems(key, s, ctx)
             if p:
                 found.append((key, i, s, title, p))
+    if kind == "view" and out.get("risk") and not RISK_END.search(out["risk"].strip()):   # 14절 6번
+        hit = [f for f in found if f[0] == "risk"]
+        msg = "틀리는 조건은 '…면 이 시각은 힘을 잃는다.'로 끝낸다"
+        if hit:
+            hit[0][4].append(msg)
+        else:
+            found.append(("risk", None, out["risk"], False, [msg]))
     if kind == "view":
         p = risk_problem(out)
         if p:
@@ -793,6 +919,11 @@ FIX_PROMPT = """아래 JSON은 시황 해설 원고입니다. 다음 문장에 �
   '추천 종목' → '꼽은 종목', '매력적인 투자 기회라고 봤다' → '○○는 지금 수준을 낮다고 봤다'처럼 숫자 · 사람으로)
 - 말한 사람 없는 판단 · 말한 사람이 흐림: 원고 안에 그렇게 말한 사람 · 채널이 나와 있으면 '○○는 …라고 봤다'로 고치고, 없으면 그 문장을 뺀다
 - 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 빼고 쓴다
+- 날짜 말이 일정과 다름: 걸린 점에 적힌 날짜 말로 고치거나 날짜 말을 뺀다
+- 사실 칸에 의견: 그 줄을 뺀다 (사실 칸은 일어난 일만). 사실 칸에 원인 풀이: '~여파로 · ~때문에' 같은 원인 부분을 빼고 일어난 일만 쓴다
+- 근거에 중심 사건 이야기가 없음: 중심 사건과 이어지는 근거로 바꾸거나 그 근거를 뺀다
+- 다음 장과 다른 나라 일정: 그 관전 포인트를 뺀다
+- 틀리는 조건 끝맺음: '…면 이 시각은 힘을 잃는다.'로 끝나게 고친다
 - 이름이 반쪽: 재료에 나온 전체 이름(성과 이름)으로 고친다
 - 틀리는 조건이 주장 · 근거와 이어지지 않음: 이 시각의 근거로 든 사건 · 숫자가 뒤집히면 힘을 잃는다는 한 문장으로 다시 쓴다
 - 비위 · 사고 주장: 채널 수가 모자라면 본문에서 그 문장을 빼고, '전했다'가 없으면 원고 안에 나온 채널 · 매체를 붙여
@@ -902,6 +1033,103 @@ def mentioned(t, names, text):
 
 # ---------- 한 편 ----------
 
+# 14절 2번: 한 글 안 같은 지표 두 값 (11-16 저녁: 신용잔고 '20조 원' · '25조 7,729억 원')
+INDICATORS = {"신용잔고": ("신용잔고", "신용 잔고", "신용거래융자", "신용융자"), "마이너스 통장": ("마이너스 통장", "마이너스통장"),
+              "예탁금": ("예탁금",), "PBR": ("PBR",), "PER": ("PER",), "VIX": ("VIX",), "환율": ("환율",),
+              "국채 금리": ("국채 금리", "국채 10년", "10년물"), "유가": ("유가", "WTI", "브렌트")}
+AMOUNT = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(조)(?:\s*(\d[\d,]*)\s*억)?|(\d[\d,]*(?:\.\d+)?)\s*(억|%|배|포인트|선|달러|원)")
+SCALE = {"조": 1e12, "억": 1e8}
+
+
+def indicator_values(text):
+    """글 → [(지표, 단위 종류, 값, 원문)] — 숫자 바로 앞 25자 안에 가장 가까이 나온 지표."""
+    out = []
+    for m in AMOUNT.finditer(text):
+        if m.group(2):
+            v = float(m.group(1).replace(",", "")) * 1e12 + float((m.group(3) or "0").replace(",", "")) * 1e8
+            kind = "amt"
+        else:
+            v, u = float(m.group(4).replace(",", "")), m.group(5)
+            kind = "amt" if u in ("억", "달러", "원") else u
+            v *= SCALE.get(u, 1)
+        before = text[max(0, m.start() - 25):m.start()]
+        best = None
+        for name, words in INDICATORS.items():
+            for w in words:
+                i = before.rfind(w)
+                if i >= 0 and (best is None or i > best[1]):
+                    best = (name, i)
+        if best:
+            out.append((best[0], kind, v, m.group(0)))
+    return out
+
+
+def resolve_conflicts(facts, views, ctx, log):
+    """같은 지표가 다른 값으로 나오면 재료(묶음 · 채널)에서 더 많이 받친 값만 남기고, 다른 값이 든 문장을 뺀다.
+
+    같으면 사실 칸에 있는 값을 남긴다. 장 줄(사실 첫 줄) · 주장(본문 첫 문장) · 틀리는 조건(끝 문장)은 빼지 않고 로그만."""
+    places = []   # (지표, 종류, 값, 원문, ('facts', i) | ('view', j, k))
+    for i, f in enumerate(facts):
+        places += [(*x, ("facts", i)) for x in indicator_values(f)]
+    for j, v in enumerate(views):
+        for k, sent in enumerate(sentences(v["body"])):
+            places += [(*x, ("view", j, k)) for x in indicator_values(sent)]
+    src = [ctx.briefing_json] * 3 + list(ctx.channel_text.values())   # 묶음은 세 채널 몫
+    drop = set()
+    for name in {p[0] for p in places}:
+        for kind in {p[1] for p in places if p[0] == name}:
+            ps = [p for p in places if p[0] == name and p[1] == kind]
+            vals = []
+            for p in ps:
+                if not any(abs(p[2] - v) <= abs(v) * 0.05 for v in vals):
+                    vals.append(p[2])
+            if len(vals) < 2:
+                continue
+
+            def support(v):
+                return sum(1 for t in src if any(x[0] == name and x[1] == kind and abs(x[2] - v) <= abs(v) * 0.02
+                                                 for x in indicator_values(t)))
+            in_facts = {p[2] for p in ps if p[4][0] == "facts"}
+            keep = max(vals, key=lambda v: (support(v), any(abs(v - f) <= abs(v) * 0.05 for f in in_facts)))
+            for p in ps:
+                if abs(p[2] - keep) > abs(keep) * 0.05:
+                    where = p[4]
+                    fixed = (where[0] == "facts" and where[1] == 0) or (
+                        where[0] == "view" and where[2] in (0, len(sentences(views[where[1]]["body"])) - 1))
+                    log(f"같은 지표 두 값: {name} '{p[3]}' (남길 값 쪽 재료 {support(keep)}곳 · 이 값 {support(p[2])}곳)"
+                        + (" → 장 줄 · 주장 · 조건 문장이라 둠" if fixed else " → 그 문장 뺌"))
+                    if not fixed:
+                        drop.add(where)
+    facts = [f for i, f in enumerate(facts) if ("facts", i) not in drop]
+    for j, v in enumerate(views):
+        ss = sentences(v["body"])
+        v["body"] = " ".join(x for k, x in enumerate(ss) if ("view", j, k) not in drop)
+    return facts, views
+
+
+# 14절 7번: 같은 사람 두 표기 (만딥 싱 · 만디프 싱) → 처음 나온 표기로
+NAME_PAIR = re.compile(r"(?<![가-힣])([가-힣]{1,5}) ([가-힣]{1,4}?)(?=(?:은|는|이|가|의)\s|\(|,)")
+
+
+def unify_names(texts, log):
+    from difflib import SequenceMatcher
+    first, reps = {}, {}
+    for t in texts:
+        for a, b in NAME_PAIR.findall(t):
+            if b in TITLES or a in TITLES:
+                continue
+            for a0 in first.get(b, []):
+                if a0 != a and a0[0] == a[0] and SequenceMatcher(None, a0, a).ratio() >= 0.4:
+                    reps[f"{a} {b}"] = f"{a0} {b}"
+                    break
+            else:
+                if a not in first.get(b, []):
+                    first.setdefault(b, []).append(a)
+    for x, y in reps.items():
+        log(f"이름 표기 하나로: '{x}' → '{y}'")
+    return reps
+
+
 def compose(day, slot, items, briefing, log=print):
     """재료 → columns 문서 칸 (status 제외). 쓰지 않을 편이면 Skip.
 
@@ -941,6 +1169,12 @@ def compose(day, slot, items, briefing, log=print):
     if len(kept) < len(facts):
         log(f"사실 칸: 두 시각 어디에도 안 쓰인 {len(facts) - len(kept)}줄 뺌")
     body = [{"dir": d, "heading": v["heading"], "body": view_body(v)} for d, v, _ in views]
+    kept, body = resolve_conflicts(kept, body, ctx, log)   # 14절 2번
+    reps = unify_names([*kept, *(b["body"] for b in body)], log)   # 14절 7번
+    for x, y in reps.items():
+        kept = [f.replace(x, y) for f in kept]
+        for b in body:
+            b["heading"], b["body"] = b["heading"].replace(x, y), b["body"].replace(x, y)
     text = " ".join([frame["title_topic"], frame["summary"], *kept, *frame["points"],
                      *(x for b in body for x in (b["heading"], b["body"]))])
     tickers = [t for t in dict.fromkeys(str(x).strip().upper() for r in [frame] + [v for _, v, _ in views]
