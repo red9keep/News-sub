@@ -419,7 +419,7 @@ class Collector:
                 else:
                     self.run.log(f"[{ch_name}] 받아쓰기 시작{split}: {short(title)}")
                 text = transcribe.transcribe(url, log=self.run.log, duration_sec=info["durationSec"])
-                source, lang, how = "gemini", None, "Gemini 받아쓰기"
+                source, lang, how = "gemini", None, f"Gemini 받아쓰기 {transcribe.last_model}"
             header = (f"제목: {title}\n채널: {ch_name}\n주소: {url}\n"
                       f"게시일: {info.get('publishedAt', '')}\n출처: {how}")
             path = store.save_transcript(vid, ch_name, title, text, header, source, lang)

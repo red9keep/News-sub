@@ -36,6 +36,7 @@ def main():
     videos = [v.strip() for v in args.videos.split(",") if v.strip()]
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     rows = []
+    config.GEMINI_MODEL_FALLBACKS = []  # 모델끼리 비교하므로 예비 모델로 넘어가지 않게
     for model in models:
         config.GEMINI_MODEL = model  # transcribe._call이 호출 때마다 읽는다
         os.makedirs(os.path.join(args.out, model), exist_ok=True)

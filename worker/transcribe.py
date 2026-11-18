@@ -51,14 +51,26 @@ def _clock(sec):
     return f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60:02d}:{rest % 60:02d}"
 
 
-def _call(video_url, start=None, end=None):
+def models():
+    """받아쓰기 모델 차례: GEMINI_MODEL 다음 예비 모델들 (겹치는 것은 뺌)"""
+    out = []
+    for m in [config.GEMINI_MODEL, *config.GEMINI_MODEL_FALLBACKS]:
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
+last_model = ""  # 마지막으로 받아쓰기에 성공한 모델 (로그 · 출처 표시용)
+
+
+def _call(video_url, start=None, end=None, model=None):
     """start · end(초)를 주면 그 구간만 받아쓴다 (Gemini 영상 자르기, 유튜브 주소에도 된다)"""
     clip, prompt = None, PROMPT
     if start is not None:
         clip = types.VideoMetadata(start_offset=f"{start}s", end_offset=f"{end}s")
         prompt += f"\n- 영상의 {_clock(start)} ~ {_clock(end)} 구간만 받아씁니다. 시각은 영상 처음부터 센 시각으로 적습니다."
     resp = _get_client().models.generate_content(
-        model=config.GEMINI_MODEL,
+        model=model or config.GEMINI_MODEL,
         contents=types.Content(parts=[
             types.Part(file_data=types.FileData(file_uri=video_url), video_metadata=clip),
             types.Part(text=prompt),
@@ -87,7 +99,7 @@ def transcribe(video_url, log=print, duration_sec=None):
     if duration_sec and duration_sec > config.MAX_DURATION_MIN * 60:
         return _segmented(video_url, duration_sec, log)
     try:
-        return _with_retries(lambda: _call(video_url), log)
+        return _with_models(lambda m: _call(video_url, model=m), log)
     except TooLong:
         if not duration_sec:
             raise
@@ -102,9 +114,40 @@ def _segmented(video_url, duration_sec, log):
     for n, start in enumerate(starts, 1):
         end = min(start + seg, int(duration_sec))
         log(f"나눠 받아쓰기 {n}/{len(starts)} ({_clock(start)} ~ {_clock(end)})")
-        text = _with_retries(lambda: _call(video_url, start, end), log)
+        text = _with_models(lambda m: _call(video_url, start, end, model=m), log)
         parts.append(_shift(text, start))
     return "\n".join(parts)
+
+
+class _ModelGone(TranscribeError):
+    """모델 이름이 없거나(404) 종료됨(410). 예비 모델이 있으면 넘어간다"""
+
+
+def _with_models(call, log):
+    """받아쓰기 모델을 차례로 쓴다. 429 · 계속된 503 · 모델 없음이면 다음 모델로.
+
+    모두 429면 QuotaExceeded(그 실행의 받아쓰기를 멈춤), 429 · 503만 섞였으면 Busy(실패로 세지 않고 다음 실행),
+    그 밖의 실패는 그대로 올린다."""
+    global last_model
+    order = models()
+    errors_seen = []
+    for i, model in enumerate(order):
+        has_next = i + 1 < len(order)
+        try:
+            text = _with_retries(lambda: call(model), log, has_next=has_next)
+        except (QuotaExceeded, Busy, _ModelGone) as e:
+            errors_seen.append(e)
+            if has_next:
+                log(f"{model} 받아쓰기 안 됨 ({e}) → 예비 모델 {order[i + 1]}로 다시")
+                continue
+            break
+        last_model = model
+        return text
+    if all(isinstance(e, QuotaExceeded) for e in errors_seen):
+        raise errors_seen[-1]
+    if all(isinstance(e, (QuotaExceeded, Busy)) for e in errors_seen):
+        raise Busy(f"모델 {len(order)}개 모두 한도(429) · 혼잡(503): {errors_seen[-1]}") from errors_seen[-1]
+    raise errors_seen[-1]
 
 
 STAMP = re.compile(r"\[(\d+(?::\d{1,2}){1,2})\]")
@@ -125,7 +168,8 @@ def _seconds(stamp):
     return sec
 
 
-def _with_retries(call, log):
+def _with_retries(call, log, has_next=False):
+    """has_next(예비 모델 있음)면 429에서 60초 기다리지 않고 바로 넘긴다"""
     last_err = None
     rate_limited = False
     server_only = True  # 모든 시도가 5xx였는지
@@ -137,9 +181,11 @@ def _with_retries(call, log):
             server_only = server_only and e.code in (500, 503, 504)
             if e.code == 400 and "token" in str(e).lower():
                 raise TooLong(reasons.explain(e)) from e
+            if e.code in (404, 410):
+                raise _ModelGone(f"Gemini 오류: {reasons.explain(e)}") from e
             if e.code == 429:
-                # 분당 한도면 1분 기다리면 풀리고, 두 번 연속이면 일일 한도로 본다
-                if rate_limited:
+                # 분당 한도면 1분 기다리면 풀리고, 두 번 연속이면 일일 한도로 본다. 예비 모델이 있으면 바로 넘어간다
+                if rate_limited or has_next:
                     raise QuotaExceeded(reasons.explain(e)) from e
                 rate_limited = True
                 log(f"Gemini 요청 한도에 걸려 60초 기다립니다 ({attempt}회차)")

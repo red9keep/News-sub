@@ -84,6 +84,7 @@ yt-dlp 요청만 VPN 주소에 묶기 때문에 VPN이 끊겨도 클라우드 IP
      | --- | --- | --- |
      | `OWNER_UID` | 처음엔 `none`, 3단계에서 실제 값으로 변경 | 필수 |
      | `GEMINI_MODEL` | 받아쓰기 모델. 비우면 `gemini-3.8-flash` | 선택 |
+     | `GEMINI_MODEL_FALLBACKS` | 받아쓰기 예비 모델 (쉼표로 구분, 차례대로). 첫 모델이 429 · 계속된 503 · 404면 다음 모델로. 비우면 `gemini-4-hydrogen,gemini-3.8-flash`, `off`면 예비 없음 | 선택 |
      | `GEMINI_TEXT_MODEL` | 요약 · 걸러내기 모델. 비우면 `GEMINI_MODEL`과 같음. 권장 `gemini-3.5-flash-lite` (한도 넉넉, 빠름) | 선택 |
      | `MAX_DURATION_MIN` | 비우면 `60` (Gemini 받아쓰기에만 적용) | 선택 |
      | `MAX_CAPTIONS_PER_RUN` | 비우면 `10`. 실행 한 번에 받는 자막(영상) 수 상한 | 선택 |

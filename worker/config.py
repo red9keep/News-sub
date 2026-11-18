@@ -27,6 +27,11 @@ NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL") or "z-ai/glm-5.3"
 # 일반 설정 (GitHub Variables, 비어 있으면 기본값)
 STORAGE_BUCKET = os.environ.get("STORAGE_BUCKET") or "ytb-v1-b96d5.firebasestorage.app"
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash"  # 받아쓰기(유튜브 주소 직접 읽기)
+# 받아쓰기 예비 모델 (11-18). 첫 모델이 429 · 계속된 503이면 차례로 넘어간다. 모델마다 한도 · 혼잡이 따로라 하나가 막혀도 다른 것이 된다.
+# 11-18 시험 (trial run 44219020694, 증시각도기 17분): 4-hydrogen 96초 끝 17:01 · 3.8-flash 482초 끝 17:15 모두 정상.
+# 같은 시각 3.6-flash · 4-argon · 4-carbon은 첫 호출부터 429, 3-flash-preview는 404. 쉼표로 구분, "off"면 예비 없음
+GEMINI_MODEL_FALLBACKS = [m.strip() for m in (os.environ.get("GEMINI_MODEL_FALLBACKS") or "gemini-4-hydrogen,gemini-3.8-flash").split(",")
+                          if m.strip() and m.strip().lower() != "off"]
 # 요약 · 주제 걸러내기(텍스트만) 모델. 비우면 GEMINI_MODEL과 같다.
 # 10-21 시험: gemini-3.8-flash는 무료 한도(하루)가 금방 차고 503이 잦았다. gemini-3.5-flash-lite는 10개를 1분에 모두 성공
 GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL") or GEMINI_MODEL

@@ -106,6 +106,7 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          GEMINI_MODEL_FALLBACKS: ${{ vars.GEMINI_MODEL_FALLBACKS }}
           GEMINI_TEXT_MODEL: ${{ vars.GEMINI_TEXT_MODEL }}
           GEMINI_TEXT_FALLBACK: ${{ vars.GEMINI_TEXT_FALLBACK }}
           MAX_DURATION_MIN: ${{ vars.MAX_DURATION_MIN }}
