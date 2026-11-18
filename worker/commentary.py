@@ -308,9 +308,15 @@ def schedule(day, briefing, names):
         except ValueError:
             continue
         u = datetime.strptime(us_day, "%Y-%m-%d")
-        label = (f"{name}: 미국 {u.month}월 {u.day}일({WEEKDAY[u.weekday()]}){' 장 마감 뒤' if x.get('after_close') else ''}"
-                 f" — 한국 독자에게는 '{rel_day(us_day, day)}'" + (f", 써도 되는 날짜 말: {' · '.join(sorted(ok))}" if ok else ""))
-        out.append({"name": name, "keys": [k for k in keys if k], "label": label, "ok": ok})
+        when = f"{name}: 미국 {u.month}월 {u.day}일({WEEKDAY[u.weekday()]}){' 장 마감 뒤' if x.get('after_close') else ''}"
+        done = (u.date() - datetime.strptime(day, "%Y-%m-%d").date()).days < 0   # 11-18 시험: 지난밤 장 마감 뒤 엔비디아 실적
+        if done:
+            ok |= {"오늘", "오늘 새벽", "지난밤"}
+            label = (f"{when} — 이미 발표됨 (한국 시각 이 글 전). 지수 마감 뒤라 지수 흐름에는 반영되지 않았다"
+                     f", 써도 되는 날짜 말: {' · '.join(sorted(ok))}")
+        else:
+            label = when + f" — 한국 독자에게는 '{rel_day(us_day, day)}'" + (f", 써도 되는 날짜 말: {' · '.join(sorted(ok))}" if ok else "")
+        out.append({"name": name, "keys": [k for k in keys if k], "label": label, "ok": ok, "done": done, "kind": k})
     return out
 
 
@@ -809,11 +815,15 @@ OTHER_MARKET = {"US": re.compile(r"한국은행|금통위|코스피|코스닥|�
 
 def bad_when(s, ctx):
     """일정 표에 있는 일정을 다른 날짜 말로 쓴 것 (14절 1번)."""
+    hit = {}   # 이름 → 그 이름의 일정들 (11-18: 실업수당 청구가 11-19 · 11-25 두 번 → 한쪽만 보고 다른 날짜 말을 막았음)
     for e in ctx.schedule:
         if any(k in s for k in e["keys"]):
-            for w in DATE_WORDS:
-                if w in s and w not in e["ok"]:
-                    return f"'{e['name']}' 날짜 말 '{w}'가 일정과 다름 ({e['label']})"
+            hit.setdefault(e["name"], []).append(e)
+    for name, es in hit.items():
+        ok = set().union(*(e["ok"] for e in es))
+        for w in DATE_WORDS:
+            if w in s and w not in ok:
+                return f"'{name}' 날짜 말 '{w}'가 일정과 다름 ({' / '.join(e['label'] for e in es)})"
     return None
 
 
@@ -1243,7 +1253,8 @@ def compose(day, slot, items, briefing, log=print):
 # 지금은 시험 모드(--story, 저장 안 함). 블로그와 새 칸 형식을 맞춘 뒤 compose를 이 틀로 바꾼다 (요청 문서 17절).
 # 호출: 글 전체 1번 → 걸린 문장이 있으면 그 문장만 고쳐 쓰게 1번 → 그래도 남으면 그 문장을 문단에서 뺀다.
 
-STORY_MODEL = "gemini-3.6-flash"   # flash-lite로는 넘어가지 않는다 (11-17: 문단이 얇고, 고쳐 쓰다 출처를 지어냄)
+STORY_MODEL = "gemini-4-hydrogen"   # 11-18 사용자 결정: 3.6 flash보다 글이 낫고 503 기다림 없음 · 받아쓰기(3.6 flash)와 한도가 갈림
+                                    # flash-lite로는 넘어가지 않는다 (11-17: 문단이 얇고, 고쳐 쓰다 출처를 지어냄)
 STORY_WAIT_MIN = 30    # 호출이 안 되면(한도 · 혼잡) 이만큼까지 기다리며 다시 해 본다. 그래도 안 되면 그 편 skip
 STORY_PAUSE_SEC = 300  # 두 키가 다 안 됐을 때 다음 시도까지 쉬는 시간
 STORY_REWRITES = 3     # 틀이 어긋나면(제목에 걸린 점 등) 처음부터 다시 쓰는 횟수
@@ -1723,9 +1734,17 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                    "방송에 나온 지수 · 수급 · 업종 숫자로 어디가 많이 움직였고 어디가 버텼는지")
     checks_rule = ("장 시작 줄(지난밤 장 뒤 첫 반응)은 따로 들어가니 쓰지 않는다. " if has_first else "") + \
         "다음 장과 이어지지 않는 일정은 고르지 않는다. 고를 것이 없으면 빈 배열."
+    done = [e["name"] for e in ctx.schedule if e.get("done") and e.get("kind") == "EARNINGS"]
+    drivers_rule = ctx.shape["rule"]
+    if done:   # 11-18 시험: 장 마감 뒤 나온 엔비디아 실적이 글 끝에 묻힘
+        names = " · ".join(done)
+        drivers_rule += (f" 일정 표에서 '이미 발표됨'인 {names}은 지수 마감 뒤에 나와 지수 흐름에는 반영되지 않았지만 다음 장의 큰 재료다."
+                         " 재료에 그 결과가 있으면 overview 둘째 문장에서 결과(재료에 적힌 숫자 · 표현만)와 시간 외 주가 반응(재료에 있을 때만)을 쓰고,"
+                         " 그 회사와 이어지는 변수 문단도 그 결과로 시작한다. 재료에 결과가 없으면 '발표됐다'는 사실만 쓰고 결과를 짐작하지 않는다.")
+        checks_rule += f" {names} 발표 뒤 첫 반응을 한 줄 넣는다 (예: '{done[0]} 뒤 반도체주 — 실적 결과가 주가로 이어지는지')."
     prompt = STORY_PROMPT.format(**common, label=ctx.label, points_title=points_title(day, slot), candidates=cands,
                                  market_rule=market_rule, checks_rule=checks_rule, sectors_rule=sectors_rule,
-                                 drivers_rule=ctx.shape["rule"], overview_len=ctx.shape["overview"],
+                                 drivers_rule=drivers_rule, overview_len=ctx.shape["overview"],
                                  driver_cands="\n".join(c["text"] for c in ctx.driver_cands) or "(없음 → 재료에서 직접 고른다, cand는 0)")
     import time
     m = model or STORY_MODEL
