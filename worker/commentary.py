@@ -24,6 +24,7 @@ import requests
 import config
 import hedge_check
 import llm
+import private
 
 BRIEFING_URL = "https://raw.githubusercontent.com/red6keep-droid/alphascope/gh-pages/briefing/{key}.json"
 
@@ -231,8 +232,9 @@ def center_event(items, briefing, market, log=None):
     ranked = sorted(by.items(), key=lambda kv: (len(kv[1]["moved"]), len(kv[1]["channels"]), kv[1]["issues"]), reverse=True)
     if log:
         for c, b in ranked[:5]:
-            log(f"  중심 사건 후보 {c}: 방향 채널 {len(b['moved'])} · 채널 {len(b['channels'])} · 이슈 {b['issues']} — "
-                + ", ".join(t for t, _ in b["topics"].most_common(4)))
+            # log의 둘째 인자부터는 본문(문장 · 주제 · 이름)이다. 공개 로그에는 글자 수만 찍힌다 (private.Report.log, 11-18)
+            log(f"  중심 사건 후보 {c}: 방향 채널 {len(b['moved'])} · 채널 {len(b['channels'])} · 이슈 {b['issues']} —",
+                ", ".join(t for t, _ in b["topics"].most_common(4)))
     cat, b = ranked[0]
     label = CATEGORIES.get(cat, cat).split(" (")[0]
     move = ""
@@ -993,7 +995,7 @@ def ask(kind, prompt, ctx, log=print):
             if found:
                 log(f"  {model} {kind}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함")
                 for _, _, s, _, p in found:
-                    log(f"    - {' · '.join(p)}: {s}")
+                    log(f"    - {' · '.join(p)}:", s)
                 probs = "\n".join(f'- "{s}" → {" · ".join(p)}' for _, _, s, _, p in found)
                 raw = llm.generate_json(FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
                                         log=log, what=f"시황 해설 고쳐 쓰기 {kind} {model}")
@@ -1004,11 +1006,11 @@ def ask(kind, prompt, ctx, log=print):
                         x for _, _, _, title, p in found if title for x in p))
                 for _, _, s, _, p in found:
                     if all(x.startswith(SOFT) for x in p):
-                        log(f"    그대로 둠 ({' · '.join(p)}): {s}")
+                        log(f"    그대로 둠 ({' · '.join(p)}):", s)
                 found = [f for f in found if not all(x.startswith(SOFT) for x in f[4])]
                 if found:
                     for _, _, s, _, p in found:
-                        log(f"    문장 뺌 ({' · '.join(p)}): {s}")
+                        log(f"    문장 뺌 ({' · '.join(p)}):", s)
                     out = ok(drop_sentences(out, found), ctx)
             return out, f"gemini:{model}"
         except llm.LLMError as e:
@@ -1142,8 +1144,8 @@ def resolve_conflicts(facts, views, ctx, log, protect=True):
                     where = p[4]
                     fixed = protect and ((where[0] == "facts" and where[1] == 0) or (
                         where[0] == "view" and where[2] in (0, len(sentences(views[where[1]]["body"])) - 1)))
-                    log(f"같은 지표 두 값: {name} '{p[3]}' (남길 값 쪽 재료 {support(keep)}곳 · 이 값 {support(p[2])}곳)"
-                        + (" → 장 줄 · 주장 · 조건 문장이라 둠" if fixed else " → 그 문장 뺌"))
+                    log("같은 지표 두 값" + (" → 장 줄 · 주장 · 조건 문장이라 둠" if fixed else " → 그 문장 뺌") + ":",
+                        f"{name} '{p[3]}' (남길 값 쪽 재료 {support(keep)}곳 · 이 값 {support(p[2])}곳)")
                     if not fixed:
                         drop.add(where)
     facts = [f for i, f in enumerate(facts) if ("facts", i) not in drop]
@@ -1172,7 +1174,7 @@ def unify_names(texts, log):
                 if a not in first.get(b, []):
                     first.setdefault(b, []).append(a)
     for x, y in reps.items():
-        log(f"이름 표기 하나로: '{x}' → '{y}'")
+        log("이름 표기 하나로:", f"'{x}' → '{y}'")
     return reps
 
 
@@ -1192,9 +1194,9 @@ def compose(day, slot, items, briefing, log=print):
     if not dirs:
         raise Skip("재료 부족", base)
     ctx = Ctx(day, slot, items, briefing, log)
-    log(f"장: {ctx.label} · 중심 사건: {ctx.center['text'] if ctx.center else '없음'}")
+    log(f"장: {ctx.label} · 중심 사건:", ctx.center['text'] if ctx.center else '없음')
     for n, c in enumerate(ctx.candidates, 1):   # 관전 포인트가 어디서 왔는지 (묶음 일정 · 방송 주제)
-        log(f"  관전 포인트 후보 {n}: {c['text']}")
+        log(f"  관전 포인트 후보 {n}:", c['text'])
     base["center"] = {"category": ctx.center["category"], "label": ctx.center["label"],
                       "channels": ctx.center["channels"]} if ctx.center else None
     try:   # 한쪽만 실수로 나가지 않게 어느 호출이든 안 되면 그 편 전체 skip. 센 건수는 남긴다
@@ -1490,7 +1492,7 @@ def driver_candidates(items, briefing, market, log=None, limit=6):
         # 11-17 한국장 시험: 종목 추천(철강 톱픽 · 가스공사 실적)이 '코스피 급락'과 같은 점수 → 시장 · 업종 이야기에 점수를 더 준다
         if not c["moved"] and not link:   # 11-17 한국장: '국가자격시험 부정행위 전수조사'가 후보 3번
             if log:
-                log(f"  변수 후보에서 뺌 (방향 · 시장 연결 없음): {c['topics'].most_common(1)[0][0]}")
+                log("  변수 후보에서 뺌 (방향 · 시장 연결 없음):", c['topics'].most_common(1)[0][0])
             continue
         score = 3 * len(c["channels"]) + 2 * len(c["wide"]) + len(c["moved"]) + min(len(c["videos"]), 10) + bonus
         tops = [t for t, _ in c["topics"].most_common(3)]
@@ -1503,7 +1505,7 @@ def driver_candidates(items, briefing, market, log=None, limit=6):
                      + f" — 채널 {c['channels']}곳 · 영상 {len(c['videos'])}개 (영상 {', '.join(map(str, c['videos'][:12]))})"
                      + (f" · 시장 연결: {c['link']}" if c["link"] else " · 시장 연결: 없음"))
         if log:
-            log(f"  변수 후보 {c['text']} [점수 {c['score']}]")
+            log(f"  변수 후보 [점수 {c['score']}]", c['text'])
     return out
 
 
@@ -1719,7 +1721,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
     if not items:
         raise Skip("영상 없음")
     ctx = Ctx(day, slot, items, briefing, log)
-    log(f"장: {ctx.label} · 중심 사건: {ctx.center['text'] if ctx.center else '없음'}")
+    log(f"장: {ctx.label} · 중심 사건:", ctx.center['text'] if ctx.center else '없음')
     ctx.strips = {}
     ctx.driver_cands = driver_candidates(items, briefing, ctx.market, log)
     ctx.shape = day_shape(briefing, ctx.driver_cands, log)
@@ -1763,7 +1765,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                     break
                 log(f"  {m}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함 ({turn}번째)")
                 for x, _, pr in found:
-                    log(f"    - {' · '.join(pr)}{near_numbers(x, ctx)}: {x}")
+                    log(f"    - {' · '.join(pr)}:", f"{near_numbers(x, ctx)} {x}")
                 probs = "\n".join(f'- "{x}" → {" · ".join(pr)}' for x, _, pr in found)
                 try:
                     raw2 = story_call(STORY_FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
@@ -1776,21 +1778,21 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                 found = story_problems(out, ctx)
             for x, _, pr in found:
                 if all(y.startswith(SOFT) for y in pr):
-                    log(f"    그대로 둠 ({' · '.join(pr)}): {x}")
+                    log(f"    그대로 둠 ({' · '.join(pr)}):", x)
             found = [f for f in found if not all(y.startswith(SOFT) for y in f[2])]
             for x, _, pr in found:
                 if all(y.startswith((AFFIL, SOFT)) for y in pr):
                     new = x
                     for a, b in (ctx.strips.get(x) or {}).items():
                         new = new.replace(a, b)
-                    log(f"    소속 · 직함만 지움 ({' · '.join(pr)}): {x}")
+                    log(f"    소속 · 직함만 지움 ({' · '.join(pr)}):", x)
                     story_replace(out, x, new)
             found = [f for f in found if not all(y.startswith((AFFIL, SOFT)) for y in f[2])]
             if found:
                 if any(title for _, title, _ in found):
                     raise ValueError("제목 · 소제목에 걸린 점 남음: " + " · ".join(x for x, t, _ in found if t))
                 for x, _, pr in found:
-                    log(f"    문장 뺌 ({' · '.join(pr)}): {x}")
+                    log(f"    문장 뺌 ({' · '.join(pr)}):", x)
                 out = story_ok(story_drop(out, found))
             break
         except llm.LLMError as e:   # 두 키 모두 안 됨 (한도 · 혼잡) → 쉬었다가 다시. 건너뛰지 않고 기다린다
@@ -1803,7 +1805,8 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
             time.sleep(STORY_PAUSE_SEC)
         except ValueError as e:
             rewrites += 1
-            log(f"  {m}: 틀 어긋남 ({e}) → " + ("처음부터 다시 씀" if rewrites < STORY_REWRITES else "그 편 건너뜀"))
+            # 오류 글에 걸린 제목 · 소제목이 들어 있을 수 있어 뒤 인자로 뺀다
+            log(f"  {m}: 틀 어긋남 → " + ("처음부터 다시 씀" if rewrites < STORY_REWRITES else "그 편 건너뜀") + ":", e)
             if rewrites >= STORY_REWRITES:
                 config.GEMINI_API_KEY = main_key
                 raise Skip("틀 어긋남") from e
@@ -1863,8 +1866,8 @@ def story_markdown(doc):
     return "\n".join(out)
 
 
-def story(day, slot, model=None, log=print):
-    """이어 쓰는 글 시험. 저장하지 않고 글만 출력."""
+def story(day, slot, model=None, log=print, out=print):
+    """이어 쓰는 글 시험. columns에 저장하지 않고 글만 out으로 낸다 (main은 시험 결과에 담는다)."""
     start, end = window(day, slot)
     items = load_summaries(start, end)
     briefing = load_briefing(day, slot, log)
@@ -1874,7 +1877,7 @@ def story(day, slot, model=None, log=print):
     except Skip as e:
         log(f"건너뜀: {e.args[0]}")
         return None
-    print(f"\n===== 이어 쓰는 글 =====\n{story_markdown(doc)}\n===== 끝 =====\n")
+    out(f"\n===== 이어 쓰는 글 =====\n{story_markdown(doc)}\n===== 끝 =====\n")
     return doc
 
 
@@ -1899,7 +1902,7 @@ def exists(key):
     return store.init().collection("columns").document(key).get().exists
 
 
-def run(day, slot, status, force=False, dry=False, log=print):
+def run(day, slot, status, force=False, dry=False, log=print, out=print):
     key = f"{day}-{slot}"
     start, end = window(day, slot)
     now = datetime.now(config.KST)
@@ -1926,7 +1929,7 @@ def run(day, slot, status, force=False, dry=False, log=print):
             doc.update(e.args[1])
         doc.update(views=[], missing=None, points=[], facts=[], title="", summary="", tickers=[], sources=[])
     if dry:
-        print(json.dumps(doc, ensure_ascii=False, indent=2, default=str))
+        out(json.dumps(doc, ensure_ascii=False, indent=2, default=str))
         return doc
     save(key, doc, log)
     return doc
@@ -1939,7 +1942,7 @@ def main():
     ap.add_argument("--status", choices=["draft-test", "ready"],
                     help="다 쓴 글의 status. 기본은 환경 변수 COMMENTARY_STATUS, 없으면 draft-test")
     ap.add_argument("--force", action="store_true", help="마감 · 이미 있음 무시 (지난 편 다시 쓰기, rev 올림)")
-    ap.add_argument("--dry", action="store_true", help="저장하지 않고 결과만 출력")
+    ap.add_argument("--dry", action="store_true", help="columns에 저장하지 않고 결과만 낸다 (Actions에서는 시험 결과에)")
     ap.add_argument("--story", action="store_true", help="이어 쓰는 글 시험 (저장 안 함)")
     ap.add_argument("--model", help="--story에서 먼저 써 볼 Gemini 모델")
     a = ap.parse_args()
@@ -1947,13 +1950,20 @@ def main():
     slot = a.slot if a.slot != "auto" else ("am" if now.hour < 12 else "pm")
     day = a.date or now.strftime("%Y-%m-%d")
     import os
-    if a.story:
-        story(day, slot, a.model)
-        return
     status = a.status or (os.environ.get("COMMENTARY_STATUS") or "draft-test")
-    if status not in ("draft-test", "ready"):
+    if not a.story and status not in ("draft-test", "ready"):
         sys.exit(f"COMMENTARY_STATUS 값이 이상함: {status}")
-    run(day, slot, status, force=a.force, dry=a.dry)
+    # 저장소가 공개라 글 · 걸린 문장은 실행 로그에 찍지 않는다. 시험 결과(trials, 웹 설정 > 시험 결과)에 담는다 (11-18).
+    # 집 PC에서는 전처럼 화면에도 찍힌다
+    kind = "이어 쓰는 글 시험" if a.story else "시험 (dry)" if a.dry else "쓰는 과정"
+    rep = private.Report("commentary", f"시황 해설 {day}-{slot} {kind}")
+    try:
+        if a.story:
+            story(day, slot, a.model, log=rep.log, out=rep.line)
+        else:
+            run(day, slot, status, force=a.force, dry=a.dry, log=rep.log, out=rep.line)
+    finally:
+        rep.save()
 
 
 if __name__ == "__main__":

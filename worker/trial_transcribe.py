@@ -2,6 +2,7 @@
 
 유튜브 주소는 Gemini가 직접 읽으므로 VPN · 유튜브 요청이 없다. 운영 수집과 같은 transcribe()를 쓴다
 (재시도 · 대기 상한 포함). 결과 원문은 trial-out/transcribe/모델/영상ID.txt.
+GitHub Actions에서는 원문을 로그 · Artifacts에 남기지 않고 시험 결과(Firestore trials, 웹 설정 > 시험 결과)에 저장한다 (11-18).
 
     GitHub Actions: trial.yml (mode=transcribe, videos · model 입력)
     python worker/trial_transcribe.py --videos A_hNNPNYOw0,hlyf2p7-t2k --models gemini-3.6-flash,gemini-3.7-flash
@@ -12,6 +13,7 @@ import re
 import time
 
 import config
+import private
 import transcribe
 
 
@@ -58,12 +60,16 @@ def main():
             for n in notes:
                 print(f"    {n}", flush=True)
             if text:
-                print("    앞부분: " + text[:300].replace("\n", " / "), flush=True)
+                if not private.ON_ACTIONS:   # 원문 앞부분: 공개 로그에는 찍지 않는다
+                    print("    앞부분: " + text[:300].replace("\n", " / "), flush=True)
                 if duration:  # 구간 이음매: 시각이 되돌아가거나 크게 비지 않는지
                     secs = [transcribe._seconds(m.group(1)) for m in transcribe.STAMP.finditer(text)]
                     back = [(a, b) for a, b in zip(secs, secs[1:]) if b < a - 5]
                     gaps = [(a, b) for a, b in zip(secs, secs[1:]) if b - a > 180]
                     print(f"    시각 {len(secs)}개, 되돌아감 {back[:5]}, 3분 넘게 빈 곳 {gaps[:5]}", flush=True)
+                rep = private.Report("transcribe", f"받아쓰기 {model} {vid}", echo=False)
+                rep.line(text)
+                rep.save()
 
     print("\n| 모델 | 영상 | 시간(초) | 글자 | 마지막 시각 | 재시도 | 오류 |")
     print("|---|---|---|---|---|---|---|")

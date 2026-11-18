@@ -461,6 +461,11 @@ class Collector:
         if finished_today(ch, self.today):
             self.run.log(f"[{ch.get('name', '')}] 오늘 영상 {n}개를 받아 오늘 수집을 마칩니다")
 
+    def quiet_log(self, msg, *secret):
+        """summarize에 넘기는 log. 본문이 든 부분(secret)은 Firestore 로그의 detail에만 남긴다.
+        저장소가 공개라 실행 로그(print)에는 요약 줄을 찍지 않는다 (11-18, worker/private.py)"""
+        self.run.log(msg, detail=" ".join(map(str, secret)) or None)
+
     def summarize_video(self, vid, meta, text):
         """자막 원문 → summaries/{영상ID}. 실패하면 summaryStatus를 pending으로 두고 다음 실행에서 다시 한다."""
         ch_name, title = meta.get("channelName", ""), meta.get("title", vid)
@@ -469,7 +474,7 @@ class Collector:
             store.set_video(vid, summaryStatus="pending")
             return False
         try:
-            data = summarize.summarize(title, ch_name, text, log=self.run.log)
+            data = summarize.summarize(title, ch_name, text, log=self.quiet_log)
         except summarize.SummarizeError as e:
             store.set_video(vid, summaryStatus="pending", summaryError=reasons.describe(e)[:300])
             self.run.log(f"[{ch_name}] 요약 실패: {short(title)} - {reasons.describe(e)}", "error",

@@ -1,4 +1,4 @@
-"""종목 의견(picks) 시험 · 지난 영상 채우기. Firestore에 저장된 자막을 다시 요약해 picks만 찍는다.
+"""종목 의견(picks) 시험 · 지난 영상 채우기. Firestore에 저장된 자막을 다시 요약해 picks만 본다.
 
 자막은 transcripts에서 읽으므로 VPN · 유튜브 요청이 없다. 운영 수집과 같은 summarize()를 쓴다.
 --save를 주면 그 영상의 summaries.picks와 picks 컬렉션만 고친다 (요약 · 이슈 · 날짜는 그대로).
@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from firebase_admin import firestore
 
+import private
 import store
 import summarize
 
@@ -58,37 +59,42 @@ def main():
         raise SystemExit("대상 영상이 없습니다.")
 
     os.makedirs(args.out, exist_ok=True)
+    # 요약 줄 · 의견은 공개 로그에 찍지 않고 시험 결과(trials)에 남긴다. 로그에는 건수만 (11-18)
+    rep = private.Report("picks", f"종목 의견 시험 {len(rows)}개" + (" (저장)" if args.save else ""))
     out, md = [], ["| 채널 | 영상 | 의견 | 종목 | 목표주가 | 말한 사람 | 이유 |", "| --- | --- | --- | --- | --- | --- | --- |"]
     for n, (vid, s) in enumerate(rows, 1):
         title, ch = s.get("titleKo") or s.get("title") or vid, s.get("channelName", "")
         text = store.get_transcript_text(vid)
         print(f"\n[{n}/{len(rows)}] [{ch}] {title[:60]} ({len(text or ''):,}자)", flush=True)
+        rep.line("")
+        rep.line(f"[{n}/{len(rows)}] [{ch}] {title}")
         if not text:
             print("  자막 없음")
             continue
         t0 = time.time()
         try:
-            data = summarize.summarize(s.get("title") or title, ch, text)
+            data = summarize.summarize(s.get("title") or title, ch, text, log=rep.log)
         except summarize.SummarizeError as e:
             print(f"  실패: {e}")
+            rep.line(f"  실패: {e}")
             out.append({"id": vid, "channel": ch, "title": title, "error": str(e)})
             continue
         picks, before = data["picks"], len(s.get("picks") or [])
         print(f"  종목 의견 {len(picks)}건 (저장된 것 {before}건, {time.time() - t0:.0f}초)")
         for i in s.get("issues") or []:   # 저장된 요약 줄 · 수치 (고치기 전과 비교용)
-            print(f"  (저장됨) ■ {i.get('category')} [{i.get('topic')}]")
+            rep.line(f"  (저장됨) ■ {i.get('category')} [{i.get('topic')}]")
             for ln in i.get("lines") or []:
-                print(f"    · {ln}")
+                rep.line(f"    · {ln}")
         for nb in s.get("numbers") or []:
-            print(f"  (저장됨) # {nb.get('what')} = {nb.get('value')} ({nb.get('period')})")
+            rep.line(f"  (저장됨) # {nb.get('what')} = {nb.get('value')} ({nb.get('period')})")
         for i in data["issues"]:   # 이슈별 요약 줄 (11-05, 블로그 팝업용) 확인
-            print(f"  ■ {i['category']} [{i['topic']}] {i['note'][:60]}")
+            rep.line(f"  ■ {i['category']} [{i['topic']}] {i['note'][:60]}")
             for ln in i["lines"]:
-                print(f"    · {ln} ({len(ln)}자)")
+                rep.line(f"    · {ln} ({len(ln)}자)")
         for nb in data["numbers"]:
-            print(f"  # {nb['what']} = {nb['value']} ({nb['period']})")
+            rep.line(f"  # {nb['what']} = {nb['value']} ({nb['period']})")
         for p in picks:
-            print("  " + summarize.pick_line(p))
+            rep.line("  " + summarize.pick_line(p))
             price = f"{p['targetPrice']:,} {p['currency']}" if p["targetPrice"] else ""
             md.append(f"| {ch} | {title[:30]} | {summarize.ACTION_KO[p['action']]} | {p['name']} {p['ticker']} | {price} "
                       f"| {p['speaker']}{' (리포트)' if p['source'] == 'report' else ''} | {p['reason']} |")
@@ -106,6 +112,7 @@ def main():
     total = sum(len(o.get("picks", [])) for o in out)
     before = sum(o.get("before", 0) for o in out)
     print(f"\n영상 {len(out)}개, 종목 의견 {total}건 (저장된 것 {before}건){' (저장함)' if args.save else ''} → {args.out}")
+    rep.save()
     if args.save:
         import feed
         feed.publish_touched()  # 고친 요약의 묶음 파일도 다시 발행 (블로그가 읽음)

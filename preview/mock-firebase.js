@@ -128,6 +128,14 @@ seedRun("r2", 95, "schedule", "done", { done: 1, failed: 0, skipped: 0, pending:
   ["success", "모든 작업을 마쳤습니다."],
 ]);
 
+// 시험 결과 (설정 > 시험 결과): 목록 문서 + parts에 본문
+[["t1", 20, "commentary", "시황 해설 2026-11-18-am 시험 (dry)", "# 11.18 시황 — 보기 글\n\n한눈에 보기 문단입니다.\n\n- 관전 포인트 하나"],
+ ["t2", 180, "summarize", "요약 시험 3개 (gemini)", "■ [CNBC Television] Markets open higher\n  요약 한 줄 보기입니다.\n\n요약 3/3개 성공"]]
+  .forEach(([id, minAgo, kind, title, text]) => {
+    put(`trials/${id}`, { kind, title, chars: text.length, parts: 1, runId: "local", createdAt: ago(minAgo) });
+    put(`trials/${id}/parts/0001`, { text });
+  });
+
 // ---------- Firestore 흉내 ----------
 let seq = 0;
 const newId = () => `m${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -175,6 +183,7 @@ export function onSnapshot(ref, next) {
   return () => listeners.delete(fire);
 }
 export const getDoc = async (ref) => docSnap(ref.path);
+export const getDocs = async (ref) => colSnap(ref);
 export async function addDoc(col, data) {
   const id = newId();
   put(`${col.path}/${id}`, resolve(data));

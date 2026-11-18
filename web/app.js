@@ -6,7 +6,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, query, where, orderBy, limit, onSnapshot,
-  addDoc, updateDoc, deleteDoc, getDoc, serverTimestamp,
+  addDoc, updateDoc, deleteDoc, getDoc, getDocs, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -228,9 +228,9 @@ function startSettingsListeners() {
 
 // ---------- 화면 이동 (주소 해시에 남김, 가이드 9) ----------
 //   #            첫 화면 (모아보기). #ch=채널ID 로 채널 탭, #cat=분류코드 로 분류 라벨 탭을 기억한다
-//   #settings    설정 화면 (처음엔 설정 · 로그). #logs · #results · #channels 는 설정 안의 하위 탭
+//   #settings    설정 화면 (처음엔 설정 · 로그). #logs · #results · #channels · #trials 는 설정 안의 하위 탭
 
-const SETTINGS_TABS = ["logs", "results", "channels"];
+const SETTINGS_TABS = ["logs", "results", "channels", "trials"];
 
 function route() {
   const hash = location.hash.slice(1);
@@ -243,6 +243,7 @@ function route() {
     startSettingsListeners();
     const name = SETTINGS_TABS.includes(hash) ? hash : "logs";
     if (name === "logs") renderStats();
+    if (name === "trials") listenTrials();   // 이 탭을 처음 열 때만 읽는다
     document.querySelectorAll(".settings-tabs .ui-subtab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === name)));
     for (const n of SETTINGS_TABS) $(`#view-${n}`).hidden = n !== name;
   } else {
@@ -962,6 +963,62 @@ $("#text-download").addEventListener("click", () => {
   URL.revokeObjectURL(a.href);
   toast("다운로드했습니다.");
 });
+
+// ---------- 시험 결과 (trials) ----------
+// 시험 실행이 남긴 본문 (worker/private.py). 목록 문서에는 본문이 없고, 눌렀을 때 parts를 읽는다
+
+const TRIAL_PAGE = 10;
+const TRIAL_KIND = { summarize: "요약", captions: "자막 받기", transcribe: "받아쓰기", picks: "종목 의견", prices: "수익률", commentary: "시황 해설" };
+let trialsCache = [];
+let trialsExpanded = false;
+let trialsListening = false;
+
+function listenTrials() {
+  if (trialsListening) return;
+  trialsListening = true;
+  const q = query(collection(db, "trials"), orderBy("createdAt", "desc"), limit(30));
+  unsubscribers.push(onSnapshot(q, (snap) => {
+    trialsCache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderTrials();
+  }, onListenError));
+  unsubscribers.push(() => { trialsListening = false; });
+}
+$("#trial-fold").addEventListener("click", () => { trialsExpanded = !trialsExpanded; renderTrials(); });
+
+function renderTrials() {
+  const box = $("#trial-rows");
+  if (!trialsCache.length) {
+    box.replaceChildren(h("div", { class: "ui-empty" }, "아직 시험 결과가 없습니다."));
+    $("#trial-fold").hidden = true;
+    return;
+  }
+  const shown = trialsExpanded ? trialsCache : trialsCache.slice(0, TRIAL_PAGE);
+  box.replaceChildren(...shown.map((t) => h("button", {
+    type: "button", class: "ui-row ui-row--top rec-row run-row", onclick: () => openTrial(t),
+  },
+  h("span", { class: "ui-row-name" }, t.title || t.id,
+    h("small", { class: "ui-num" }, [fmtTime(t.createdAt), `${(t.chars || 0).toLocaleString("ko-KR")}자`].filter(Boolean).join(" · "))),
+  h("span", { class: "ui-row-value" }, label([TRIAL_KIND[t.kind] || t.kind || "시험", "ui-label--neutral"])))));
+  foldButton($("#trial-fold"), trialsCache.length, TRIAL_PAGE, trialsExpanded, "시험 결과");
+}
+
+async function openTrial(t) {
+  let snap;
+  try {
+    snap = await getDocs(collection(db, "trials", t.id, "parts"));
+  } catch (e) {
+    return toast(`불러올 수 없습니다. ${e.message}`, true);
+  }
+  const body = snap.docs.slice().sort((a, b) => a.id.localeCompare(b.id)).map((d) => d.data().text || "").join("");
+  if (!body) return toast("저장된 내용이 없습니다.", true);
+  currentText = { title: t.title || t.id, body, summary: "", pane: "text" };
+  $("#text-title").textContent = currentText.title;
+  $("#text-body").textContent = body;
+  $("#text-summary").replaceChildren();
+  $("#text-tabs").hidden = true;
+  $("#text-dialog").showModal();
+  showPane("text");
+}
 
 // ---------- 로그 ----------
 

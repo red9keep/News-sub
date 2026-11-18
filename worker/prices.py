@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 import yfinance as yf
 from firebase_admin import firestore
 
+import private
 import store
 
 HORIZONS = (5, 20, 60)
@@ -214,6 +215,7 @@ def main():
         prices.update(download(retry, start))
 
     changed, missing = 0, set()
+    rep = private.Report("prices", "종목 의견 수익률 미리 보기")   # 의견 한 건씩은 공개 로그에 찍지 않는다 (11-18)
     batch, in_batch = db.batch(), 0
     for pid, p, market, syms, eff in todo:
         sym = next((s for s in syms if s in prices), None)
@@ -231,10 +233,10 @@ def main():
         changed += 1
         if a.dry_run:
             if changed <= 30:
-                print(f"  {p.get('date')} {p.get('channelName', '')[:14]:14} {p.get('name', '')[:12]:12} {sym:10} "
-                      f"{p.get('action'):5} 기준 {perf['baseDate']} 지금 {perf['rNow']:+.1%} (시장 대비 {perf['xNow'] or 0:+.1%}) "
-                      + " ".join(f"{n}일 {perf[f'x{n}']:+.1%}{'○' if perf[f'hit{n}'] else '×' if perf[f'hit{n}'] is False else ''}"
-                                 for n in HORIZONS if perf.get(f"x{n}") is not None))
+                rep.line(f"  {p.get('date')} {p.get('channelName', '')[:14]:14} {p.get('name', '')[:12]:12} {sym:10} "
+                         f"{p.get('action'):5} 기준 {perf['baseDate']} 지금 {perf['rNow']:+.1%} (시장 대비 {perf['xNow'] or 0:+.1%}) "
+                         + " ".join(f"{n}일 {perf[f'x{n}']:+.1%}{'○' if perf[f'hit{n}'] else '×' if perf[f'hit{n}'] is False else ''}"
+                                    for n in HORIZONS if perf.get(f"x{n}") is not None))
             continue
         batch.update(db.collection("picks").document(pid), {"perf": {**perf, "updatedAt": firestore.SERVER_TIMESTAMP}})
         in_batch += 1
@@ -243,6 +245,7 @@ def main():
             batch, in_batch = db.batch(), 0
     if in_batch:
         batch.commit()
+    rep.save()
     if missing:
         print(f"주가를 못 찾은 심볼 {len(missing)}개: {', '.join(sorted(missing)[:40])}")
 

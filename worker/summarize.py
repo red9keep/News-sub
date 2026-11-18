@@ -17,6 +17,7 @@ import re
 import config
 import hedge_check
 import llm
+import private
 
 CATEGORIES = {
     # 큰 분류 17개 (10-22 확정). 통계용이라 고정. 세부 주제는 issues[].topic에 자유롭게 적는다.
@@ -398,7 +399,8 @@ def check_lines(data, src, log=print):
             bad = num_problem(ln, have)
             if bad:
                 dropped += 1
-                log(f"요약 줄 뺌 (자막에 없는 숫자 {bad}): {ln}")   # bad에 자막 가까운 숫자도 들어 있음
+                # 뒤 인자는 본문(요약 줄 · 자막 가까운 숫자)이라 공개 로그에 찍히지 않는다 (private.Report.log · collector.quiet_log)
+                log("요약 줄 뺌 (자막에 없는 숫자):", f"{bad} | {ln}")
                 continue
             new, why = hedge_check.hedge(ln, src)
             if why:
@@ -463,6 +465,24 @@ def pick_line(p):
     ticker = f" {p['ticker']}" if p["ticker"] else ""
     return f"* {ACTION_KO[p['action']]} {p['name']}{ticker}{price} - {p['speaker'] or '?'}{src}{at}: {p['reason']}"
 
+
+def report_lines(channel, title, data):
+    """요약 한 건을 읽기 좋게 (시험 결과용). 본문이라 공개 로그에 찍지 않는다"""
+    out = [f"\n■ [{channel}] {title[:70]}", f"  {data['summary']}"]
+    for i in data["issues"]:
+        out.append(f"  - {i['category']:<16} {i['stance']:<8} {i['surprise']:<9} {i['scope']:<7} {i['country']:<3} "
+                   f"{i['horizon']:<7} [{i['topic']}] {','.join(i['tickers'])}  {i['note'][:50]}")
+        out += [f"      · {ln}" for ln in i["lines"]]
+    out.append(f"  종목: {', '.join(data['tickers'])}  섹터: {', '.join(data['sectors'])}  키워드: {', '.join(data['keywords'])}")
+    out += ["  " + pick_line(p) for p in data["picks"]]
+    return out
+
+
+def counts_line(data):
+    """공개 로그에 찍어도 되는 한 줄 (건수 · 글자 수만)"""
+    return f"요약 {len(data['summary'])}자 · 이슈 {len(data['issues'])}건 · 종목 의견 {len(data['picks'])}건"
+
+
 def _parse_file(path):
     """trial.py가 쓴 파일: 머리글(제목/채널/주소/게시/자막) + 빈 줄 + 본문."""
     with open(path, encoding="utf-8") as f:
@@ -476,37 +496,39 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default="trial-out", help="trial 자막 파일 폴더")
     ap.add_argument("--max", type=int, default=50)
+    ap.add_argument("--run-id", default="",
+                    help="자막 파일을 비공개 Storage trial/{실행 번호}/에서 먼저 받는다 (trial captions 실행 번호)")
     args = ap.parse_args()
+    if args.run_id:
+        print(f"자막 파일 {private.download_dir(args.run_id, args.dir)}개 받음 (trial/{args.run_id}/)")
     files = sorted(glob.glob(os.path.join(args.dir, "**", "*.txt"), recursive=True))[:args.max]
     if not files:
         raise SystemExit(f"{args.dir} 안에 자막 파일이 없습니다.")
     out = []
+    # 요약 본문은 공개 로그에 찍지 않고 시험 결과(trials)에 남긴다. 로그에는 건수만
+    rep = private.Report("summarize", f"요약 시험 {len(files)}개 ({config.LLM_PROVIDER})")
     for n, path in enumerate(files, 1):
         meta, body = _parse_file(path)
         title, channel = meta.get("제목", os.path.basename(path)), meta.get("채널", "")
         print(f"\n[{n}/{len(files)}] {title[:60]} ({len(body):,}자)", flush=True)
         try:
-            data = summarize(title, channel, body)
+            data = summarize(title, channel, body, log=rep.log)
         except SummarizeError as e:
             print(f"실패: {title[:50]} - {e}")
+            rep.line(f"\n■ [{channel}] {title[:70]}\n  실패: {e}")
             out.append({"file": os.path.basename(path), "title": title, "error": str(e)})
             continue
-        print(f"\n■ [{channel}] {title[:70]}")
-        print(f"  {data['summary']}")
-        for i in data["issues"]:
-            print(f"  - {i['category']:<16} {i['stance']:<8} {i['surprise']:<9} {i['scope']:<7} {i['country']:<3} "
-                  f"{i['horizon']:<7} [{i['topic']}] {','.join(i['tickers'])}  {i['note'][:50]}")
-            for ln in i["lines"]:
-                print(f"      · {ln}")
-        print(f"  종목: {', '.join(data['tickers'])}  섹터: {', '.join(data['sectors'])}  키워드: {', '.join(data['keywords'])}")
-        for p in data["picks"]:
-            print("  " + pick_line(p))
+        for ln in report_lines(channel, title, data):
+            rep.line(ln)
+        print("  " + counts_line(data), flush=True)
         out.append({"file": os.path.basename(path), "title": title, "channel": channel,
                     "url": meta.get("주소"), "published": meta.get("게시"), **data})
     with open(os.path.join(args.dir, "summaries.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
     ok = sum(1 for o in out if "error" not in o)
     print(f"\n요약 {ok}/{len(out)}개 성공 (마지막 모델 {llm.last_model()}) → {os.path.join(args.dir, 'summaries.json')}")
+    rep.line(f"\n요약 {ok}/{len(out)}개 성공 (마지막 모델 {llm.last_model()})")
+    rep.save()
 
 
 if __name__ == "__main__":

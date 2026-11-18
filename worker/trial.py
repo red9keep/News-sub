@@ -1,4 +1,5 @@
-"""하루치 자막 시험 수집. Firebase · API 키 없이 자막 파일만 받아 폴더에 저장한다.
+"""하루치 자막 시험 수집. 집 PC에서는 Firebase · API 키 없이 자막 파일만 받아 폴더에 저장한다.
+GitHub Actions에서는 받은 파일을 비공개 Storage trial/{실행 번호}/에 올린다 (저장소가 공개라 Artifacts를 쓰지 않음, 11-18).
 
 주제가 하루에 몇 개 나오는지 보기 위한 1회성 시험용이다. 운영 수집은 collector.py가 한다.
 
@@ -16,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import captions
 import config
+import private
 import summarize
 from store import sanitize_name
 
@@ -67,6 +69,8 @@ def main():
     out_dir = os.path.join(args.out, datetime.now(config.KST).strftime("%Y-%m-%d"))
     os.makedirs(out_dir, exist_ok=True)
 
+    # 요약 본문은 공개 로그에 찍지 않고 시험 결과(trials)에 남긴다 (집 PC 화면에는 전처럼 분류만)
+    rep = private.Report("captions", f"자막 시험 요약 (최근 {args.hours}시간)", echo=False)
     index, seen, blocked = [], set(), None
     tried, skipped_max = 0, 0  # 운영과 같은 실행당 상한으로 자막 받기를 멈춘다
     try:
@@ -137,8 +141,10 @@ def main():
                     print(f"  받음 ({res['kind']}, {res['language']}, {len(res['text']):,}자, {res['track']}): {rec['title'][:40]}")
                     if args.summarize and config.GEMINI_API_KEY:
                         try:
-                            rec["summary"] = summarize.summarize(rec["title"], name, res["text"])
+                            rec["summary"] = summarize.summarize(rec["title"], name, res["text"], log=rep.log)
                             print(f"    요약: {', '.join(rec['summary']['categories']) or '분류 없음'}")
+                            for ln in summarize.report_lines(name, rec["title"] or vid, rec["summary"]):
+                                rep.line(ln)
                         except summarize.SummarizeError as e:
                             rec["summaryError"] = str(e)[:200]
                             print(f"    요약 실패: {e}")
@@ -165,6 +171,14 @@ def main():
     with open(os.path.join(out_dir, "index.json"), "w", encoding="utf-8") as f:
         json.dump({"summary": summary, "videos": index}, f, ensure_ascii=False, indent=1)
     print(json.dumps(summary, ensure_ascii=False))
+    # Actions: 자막 파일은 Artifacts(누구나 받음) 대신 비공개 Storage에 둔다. summarize 모드가 이 실행 번호로 다시 읽는다
+    if private.ON_ACTIONS:
+        if private.can_store():
+            print(f"자막 파일 {private.upload_dir(args.out)}개 → 비공개 Storage {private.STORAGE_PREFIX}/{private.RUN_ID}/ "
+                  f"(summarize 모드 run_id={private.RUN_ID})")
+        else:
+            print("Firebase 인증 정보가 없어 자막 파일을 남기지 못했습니다.")
+    rep.save()
     if blocked:
         sys.exit(2)
 

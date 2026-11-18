@@ -105,6 +105,7 @@
         <button class="ui-subtab" role="tab" type="button" data-tab="logs" aria-selected="true">설정 · 로그</button>
         <button class="ui-subtab" role="tab" type="button" data-tab="results" aria-selected="false">수집 결과</button>
         <button class="ui-subtab" role="tab" type="button" data-tab="channels" aria-selected="false">채널</button>
+        <button class="ui-subtab" role="tab" type="button" data-tab="trials" aria-selected="false">시험 결과</button>
       </div>
 
       <!-- 채널 -->
@@ -166,6 +167,21 @@
           </div>
           <div id="video-rows"><div class="ui-empty">불러오는 중…</div></div>
           <button class="ui-fold-btn" type="button" id="video-fold" aria-expanded="false" hidden><span></span><svg class="ui-chev" width="16" height="16" aria-hidden="true"><use href="#i-chev"/></svg></button>
+        </div>
+      </section>
+      </div>
+
+      <!-- 시험 결과: 시험 실행이 남긴 요약 · 받아쓴 글 · 시험 글. 저장소가 공개라 실행 로그 대신 여기서 본다 -->
+      <div class="ui-dash" id="view-trials" hidden>
+      <section class="ui-dash-card ui-span-all">
+        <div class="ui-section-head">
+          <h2 class="ui-section-title"><span class="ui-tile ui-tile--violet" aria-hidden="true"><svg><use href="#i-list"/></svg></span>시험 결과</h2>
+          <span class="ui-note">최근 30건 · 14일 보관</span>
+        </div>
+        <div class="ui-card-body">
+          <div id="trial-rows"><div class="ui-empty">불러오는 중…</div></div>
+          <button class="ui-fold-btn" type="button" id="trial-fold" aria-expanded="false" hidden><span></span><svg class="ui-chev" width="16" height="16" aria-hidden="true"><use href="#i-chev"/></svg></button>
+          <div class="ui-info ui-info--in-card"><svg><use href="#i-info"/></svg><span>GitHub 실행 로그에는 건수 · 글자 수만 남습니다. 글 내용은 여기에만 저장됩니다.</span></div>
         </div>
       </section>
       </div>

@@ -131,7 +131,9 @@ python worker/migrate_v1.py --apply    # 저장
 0. 새 영상 수 세기 (유튜브 요청 없음): Actions → **trial** → mode `count` → 로그에서 예약 시각별 새 영상 · 대기 · 놓침 확인
 1. 집 공유기 VPN: Actions → **trial** → mode `vpn-only` → 단계 [1/6]~[6/6]이 모두 통과하는지 확인
    - [4/6]에서 실패: 공유기 IPSec 설정 · 비밀키 / [5/6]: VPN 계정 · 암호 / [2/6]·[6/6]: DDNS 주소
-2. 하루치 자막 (Firebase 설정 전에도 가능): **trial** → mode `captions` → 끝나면 실행 화면 아래 Artifacts의 `trial-captions` 내려받기
+2. 하루치 자막: **trial** → mode `captions` → 자막 파일은 비공개 Storage `trial/{실행 번호}/`에, 요약은 웹 설정 → 시험 결과에 남는다
+   - 저장소가 공개라 실행 로그 · Artifacts는 누구나 본다. 요약 · 자막 · 시험 글은 로그에 찍지 않고 Artifacts로도 올리지 않는다 (`worker/private.py`)
+   - 로그에는 건수 · 글자 수만 남는다. 시험 글 · 요약 · 받아쓴 글은 웹 설정 → 시험 결과에서 본다 (14일 보관)
 3. 운영 수집: **collect** → Run workflow (모든 채널 수집) → 웹의 로그 탭에서 진행 확인
 
 집 PC에서 VPN 없이 자막 시험만 할 때:

@@ -43,6 +43,14 @@ service cloud.firestore {
       allow read: if isOwner();
     }
 
+    // 시험 결과 (worker/private.py). 공개 실행 로그 대신 여기에 본문을 남긴다
+    match /trials/{id} {
+      allow read: if isOwner();
+      match /parts/{partId} {
+        allow read: if isOwner();
+      }
+    }
+
     match /runs/{id} {
       allow read: if isOwner();
       match /logs/{logId} {

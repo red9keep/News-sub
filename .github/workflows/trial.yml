@@ -3,13 +3,15 @@ name: trial
 # 수동 실행 전용 시험
 #   count     : 공식 API로 하루 새 영상 수만 센다 (VPN · 유튜브 페이지 요청 없음)
 #   vpn-only  : 집 공유기 VPN 접속과 집 IP 확인만 한다 (유튜브 요청 없음)
-#   captions  : VPN 경유로 최근 영상 자막을 받아 압축 파일(Artifacts)로 남긴다 (Firebase 불필요, 실행당 상한 10개). 키가 있으면 요약까지
+#   captions  : VPN 경유로 최근 영상 자막을 받아 비공개 Storage trial/{실행 번호}/에 남긴다 (실행당 상한 10개). 키가 있으면 요약까지
 #   summarize : 이전 captions 실행의 자막 파일(run_id)을 요약만 한다 (VPN · 유튜브 요청 없음)
 #   llm-models: Gemini · NVIDIA Build API가 지금 제공하는 모델 ID 목록을 찍는다 (모델이 없어진 404 · 410 오류 대응)
 #   transcribe: videos 영상들을 models 모델마다 Gemini로 받아써 비교한다 (VPN · 유튜브 요청 없음)
 #   home-ip   : AlphaScope 가 GitHub 주소로 막히는 세 곳(국민연금 · 미래에셋 TIGER · substack)을 바로 · 집 IP 로 비교하고,
 #               접속 2개를 동시에 열어 공유기가 서로 끊지 않는지 본다 (2026-11-17, scripts/probe_home_ip.sh)
-#   picks     : Firestore에 저장된 자막을 다시 요약해 종목 의견만 찍는다 (channels · hours 또는 videos). save면 picks만 저장
+#   picks     : Firestore에 저장된 자막을 다시 요약해 종목 의견만 본다 (channels · hours 또는 videos). save면 picks만 저장
+# 저장소가 공개라 실행 로그 · Artifacts는 누구나 본다 (11-18). 요약 · 자막 · 받아쓴 글 같은 본문은 로그에 찍지 않고
+# Artifacts로도 올리지 않는다. 결과는 비공개 Firestore trials에 저장해 웹(설정 > 시험 결과)에서 본다 (worker/private.py)
 # videos 입력을 주면 captions가 채널 목록 대신 그 영상들만 받는다 (요약 없음). player_client · player_skip은 yt-dlp 설정 시험용
 # provider 입력을 주면 그 실행만 해당 제공자(gemini · nvidia)로 요약 · 걸러내기를 한다. 비우면 변수 LLM_PROVIDER
 on:
@@ -70,10 +72,9 @@ concurrency:
   group: collect
   cancel-in-progress: false
 
-# summarize 모드가 다른 실행의 Artifacts를 내려받으려면 actions: read가 필요하다
+# 공개 저장소: 워크플로 토큰은 읽기만
 permissions:
   contents: read
-  actions: read
 
 env:
   PYTHONUNBUFFERED: "1"  # 로그가 바로 보이게 (버퍼링되면 실행이 끊길 때 진행 상황이 사라진다)
@@ -135,6 +136,8 @@ jobs:
             python worker/trial.py --hours "${{ inputs.hours }}"
           fi
         env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}   # 자막 파일 · 요약을 비공개 저장소에 남긴다
+          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
           CAPTIONS_MODE: home
           YT_SOURCE_ADDRESS: ${{ steps.vpn.outputs.ip }}
           VIDEOS: ${{ inputs.videos }}
@@ -148,6 +151,7 @@ jobs:
           pip install -r worker/requirements.txt
           python worker/trial_transcribe.py --videos "$VIDEOS" ${MODELS:+--models "$MODELS"} ${SPLIT:+--split "$SPLIT"}
         env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}   # 받아쓴 글을 시험 결과에 남긴다
           VIDEOS: ${{ inputs.videos }}
           MODELS: ${{ inputs.models }}
           SPLIT: ${{ inputs.split }}
@@ -217,15 +221,6 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           MAX_CAPTIONS_PER_DAY: ${{ vars.MAX_CAPTIONS_PER_DAY }}
 
-      - name: 이전 captions 실행의 자막 파일 가져오기
-        if: inputs.mode == 'summarize'
-        uses: actions/download-artifact@v4
-        with:
-          name: trial-captions
-          path: trial-out
-          run-id: ${{ inputs.run_id }}
-          github-token: ${{ github.token }}
-
       - name: Gemini · NVIDIA Build에서 쓸 수 있는 모델 목록
         if: inputs.mode == 'llm-models'
         run: |
@@ -241,35 +236,14 @@ jobs:
         timeout-minutes: 40
         run: |
           pip install -r worker/requirements.txt
-          python worker/summarize.py --dir trial-out ${{ inputs.max && format('--max {0}', inputs.max) || '' }}
+          python worker/summarize.py --dir trial-out --run-id "$RUN_ID" ${MAX:+--max "$MAX"}
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}   # 자막 파일을 비공개 Storage에서 받고 요약을 시험 결과에 남긴다
+          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
+          RUN_ID: ${{ inputs.run_id }}
+          MAX: ${{ inputs.max }}
 
-      - uses: actions/upload-artifact@v4
-        if: always() && inputs.mode == 'captions'
-        with:
-          name: trial-captions
-          path: trial-out/
-          retention-days: 1   # 공개 저장소라 결과 파일은 누구나 받을 수 있음 → 하루만 보관
-
-      - uses: actions/upload-artifact@v4
-        if: always() && inputs.mode == 'transcribe'
-        with:
-          name: trial-transcribe-${{ github.run_id }}
-          path: trial-out/transcribe/
-          retention-days: 1   # 공개 저장소라 결과 파일은 누구나 받을 수 있음 → 하루만 보관
-
-      - uses: actions/upload-artifact@v4
-        if: always() && inputs.mode == 'picks'
-        with:
-          name: trial-picks-${{ github.run_id }}
-          path: trial-out/picks/
-          retention-days: 1   # 공개 저장소라 결과 파일은 누구나 받을 수 있음 → 하루만 보관
-
-      - uses: actions/upload-artifact@v4
-        if: always() && inputs.mode == 'summarize'
-        with:
-          name: trial-summaries-${{ inputs.provider || 'default' }}-${{ github.run_id }}
-          path: trial-out/summaries.json
-          retention-days: 1   # 공개 저장소라 결과 파일은 누구나 받을 수 있음 → 하루만 보관
+      # 결과 파일은 Artifacts로 올리지 않는다 (공개 저장소라 누구나 받음). 각 스크립트가 비공개 Firestore trials · Storage trial/에 남긴다
 
       - name: VPN 끊기
         if: always() && steps.vpn.outcome == 'success'

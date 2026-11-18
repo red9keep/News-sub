@@ -2,6 +2,7 @@ name: commentary
 
 # 알파스코프 시황 해설 (worker/commentary.py, News-doc 요청-알파스코프-시황-해설.md)
 # 11-16 사용자 결정: 품질을 확인할 때까지 자동 실행 멈춤. 지금은 손으로만 돌린다 (dry로 시험 글 보기).
+# 저장소가 공개라 글 · 걸린 문장은 실행 로그에 찍지 않는다 (11-18). 글과 쓰는 과정은 비공개 Firestore trials에 남고 웹(설정 > 시험 결과)에서 본다
 # 다시 켤 때: ① cron-trigger/src/index.js COMMENTARY에 08:10 am · 20:30 pm 되살리고 wrangler deploy
 #             ② 아래 schedule 예비 cron 되살림 ("14 23 * * *" = 08:14 KST am, "33 11 * * *" = 20:33 KST pm)
 #   이미 그 편이 있으면 바로 끝나고, 마감(08:30 · 20:40)을 넘겼으면 skip 문서만 남긴다
@@ -23,11 +24,11 @@ on:
         type: boolean
         default: false
       dry:
-        description: "저장하지 않고 결과만 로그에 출력"
+        description: "columns에 저장하지 않고 시험 결과로만 남김 (웹 설정 > 시험 결과)"
         type: boolean
         default: false
       story:
-        description: "이어 쓰는 글 시험 (저장 안 함, 11-17)"
+        description: "이어 쓰는 글 시험 (columns에 저장 안 함, 글은 웹 설정 > 시험 결과, 11-17)"
         type: boolean
         default: false
       model:
