@@ -1,16 +1,16 @@
 """알파스코프 시황 해설 (11-16, News-doc 요청-알파스코프-시황-해설.md).
 
 하루 두 편. 그 편 시간대에 받은 방송 요약(summaries) + 블로그 묶음 파일(briefing)을 재료로
-오름 쪽 · 내림 쪽 시각을 따로 호출해 쓰고, Firestore columns/{날짜}-{am|pm}에 칸으로 나눠 저장한다.
-블로그는 status가 ready인 것만 발행한다.
+'이어 쓰는 시황 기사'(17 ~ 22절, format "story") 한 편을 쓰고, Firestore columns/{날짜}-{am|pm}에 칸으로 나눠 저장한다.
+블로그는 status가 ready인 것만 발행한다. 옛 틀(facts · views, 오름 · 내림 시각 따로)은 11-19에 버림 (18절 Q19).
 
     am  아침 편: 미국 마감 해설 + 오늘 한국장 관전 포인트. 재료 = 전날 20:40 ~ 당일 08:30, 마감 08:30
     pm  저녁 편: 한국 마감 해설 + 오늘 밤 미국장 관전 포인트. 재료 = 당일 08:30 ~ 20:40, 마감 20:40
 
-쓸지 말지는 AI가 아니라 여기서 재료를 세어 정한다 (count_evidence). 근거가 모자란 쪽은 쓰지 않는다.
+무엇이 중요한지(변수 후보 순위 · 글의 무게)는 AI가 아니라 여기서 먼저 정한다 (driver_candidates · day_shape).
 
     python worker/commentary.py --slot am                 # 예약 실행 (이미 있으면 그냥 끝냄)
-    python worker/commentary.py --slot pm --date 2026-11-16 --force --dry   # 지난 편 시험, 저장 안 함
+    python worker/commentary.py --slot pm --date 2026-11-16 --dry   # 지난 편 시험, 저장 안 함 (--story도 같음)
 """
 import argparse
 import json
@@ -33,14 +33,7 @@ SLOTS = {
     "am": {"start": (-1, 20, 40), "end": (0, 8, 30), "market": "US", "next": "KR"},
     "pm": {"start": (0, 8, 30), "end": (0, 20, 40), "market": "KR", "next": "US"},
 }
-# 근거 건수에서 뺄 범주: stance가 주가가 아니라 유가 · 통화 · 코인 가격 방향 (Q6)
-NOT_EQUITY = {"OIL_ENERGY", "FX_GLOBAL", "CRYPTO"}
-MIN_EVIDENCE = 2           # 서로 다른 채널 또는 데이터에서 근거 이만큼이면 그 시각을 쓴다 (처음 2 ~ 3주 보고 맞춤)
 MAX_MATERIAL_CHARS = 60_000
-# 첫 모델 · 예비 (AI 호출 실패나 틀 어긋남이면 예비로 한 번 더, 그래도 안 되면 그 편 skip)
-MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
-
-DIR_KO = {"bull": "오름", "bear": "내림"}
 
 
 class Skip(Exception):
@@ -108,48 +101,6 @@ def load_briefing(day, slot, log=print):
     return b
 
 
-def count_evidence(items, briefing, market):
-    """오름 · 내림 쪽 근거를 센다 (2-1절).
-
-    방송: scope market 전부 + sector 중 NOT_EQUITY를 뺀 이슈의 stance. country가 해설 시장과 다르게 적힌 것은 뺀다(빈 값은 넣음).
-    데이터: 묶음 signals[].dir (up · down).
-    """
-    pool = []   # 건수에 들어가는 이슈 전부 (neutral 포함, 빠진 쪽 한 줄의 '이슈 n건 중'에 씀)
-    side = {"bull": {"issues": 0, "channels": set(), "signals": 0, "videos": set()},
-            "bear": {"issues": 0, "channels": set(), "signals": 0, "videos": set()}}
-    for s in items:
-        ch = s.get("channelName") or s.get("channelId") or "?"
-        for it in s.get("issues") or []:
-            scope, cat, country = it.get("scope"), it.get("category"), (it.get("country") or "").upper()
-            if scope == "market" or (scope == "sector" and cat not in NOT_EQUITY):
-                if country and country != market:
-                    continue
-                pool.append(it)
-                d = {"bullish": "bull", "bearish": "bear"}.get(it.get("stance"))
-                if d:
-                    side[d]["issues"] += 1
-                    side[d]["channels"].add(ch)
-                    side[d]["videos"].add(s["id"])
-    for sg in (briefing or {}).get("signals") or []:
-        d = {"up": "bull", "down": "bear"}.get(sg.get("dir"))
-        if d:
-            side[d]["signals"] += 1
-    counts = {d: {"issues": v["issues"], "channels": len(v["channels"]), "signals": v["signals"]}
-              for d, v in side.items()}
-    videos = {d: v["videos"] for d, v in side.items()}
-    return counts, len(pool), videos
-
-
-def enough(c):
-    """서로 다른 채널 또는 데이터에서 근거 MIN_EVIDENCE건 이상."""
-    return c["channels"] + c["signals"] >= MIN_EVIDENCE
-
-
-def missing_line(d, c, pool):
-    return (f"오늘 {DIR_KO[d]} 쪽 근거는 거의 없었습니다 — 방송 이슈 {pool}건 중 {c['issues']}건, "
-            f"채널 {c['channels']}곳")
-
-
 def session_label(day, slot, briefing, plain=False):
     """사실 칸 첫 줄의 장 이름 (Q15). 묶음이 있으면 trade_date, 없으면 직전 평일 (am = 미국장, pm = 한국장).
 
@@ -181,23 +132,36 @@ def _pct(v):
     return f"{'+' if v > 0 else '−' if v < 0 else ''}{abs(v):.2f}%"
 
 
+def _move(v):
+    """등락을 부호 없이 '1.82% 하락' · '0.40% 상승' · '보합' (11-19 블로그: 발행기가 방향 낱말을 ▲▼로 바꾼다)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return ""
+    return f"{abs(v):.2f}% {'상승' if v > 0 else '하락'}" if round(v, 2) else "보합"
+
+
+# 본문의 부호 붙은 등락 '−1.82%' · '+0.05%p' → '1.82% 하락' · '0.05%p 상승'. 바로 뒤에 방향 말이 있으면 부호만 뗀다
+SIGNED = re.compile(r"(?<![\w\d.,])([+\-−–])\s?(\d[\d,]*(?:\.\d+)?)(%p|%)(\s*)(?=(하락|상승|내림|오름|내렸|올랐|내린|오른|떨어|올라|빠졌|빠진|급락|급등|반등|약세|강세|밀렸|밀린)?)")
+
+
+def unsign(t):
+    def f(m):
+        sign, num, unit, sp, after = m.groups()
+        if after:
+            return f"{num}{unit}{sp}"
+        return f"{num}{unit} {'상승' if sign == '+' else '하락'}{sp}"
+    t = SIGNED.sub(f, t or "")
+    # '하락' · '상승'은 받침이 있다: '1.82% 하락로' → '하락으로'
+    return re.sub(r"(%p? (?:하락|상승))(로|가|는|를|와)(?![가-힣])",
+                  lambda m: m.group(1) + {"로": "으로", "가": "이", "는": "은", "를": "을", "와": "과"}[m.group(2)], t)
+
+
 def index_line(label, briefing):
     """묶음 close.indices가 있으면 지수 등락 한 줄 (Q15). 숫자는 묶음 그대로라 AI를 거치지 않는다."""
-    xs = [f"{x.get('name')} {_pct(x.get('chg_pct'))}" for x in ((briefing or {}).get("close") or {}).get("indices") or []
+    xs = [f"{x.get('name')} {_move(x.get('chg_pct'))}" for x in ((briefing or {}).get("close") or {}).get("indices") or []
           if x.get("name") and _pct(x.get("chg_pct"))]
     return f"{label}: {' · '.join(xs)}" if xs else ""
-
-
-def counted_issues(items, market):
-    """근거 건수에 드는 이슈 (count_evidence와 같은 기준) → [(영상 번호, 채널, 이슈)]."""
-    out = []
-    for n, s in enumerate(items, 1):
-        ch = s.get("channelName") or s.get("channelId") or "?"
-        for it in s.get("issues") or []:
-            scope, cat, country = it.get("scope"), it.get("category"), (it.get("country") or "").upper()
-            if (scope == "market" or (scope == "sector" and cat not in NOT_EQUITY)) and not (country and country != market):
-                out.append((n, ch, it))
-    return out
 
 
 def add_center(by, c, n, ch, it):
@@ -389,7 +353,7 @@ def material_text(items, only=None):
 class Ctx:
     def __init__(self, day, slot, items, briefing, log=None):
         import summarize
-        self.day, self.slot, self.items, self.briefing = day, slot, items, briefing
+        self.day, self.slot, self.items, self.briefing, self.log = day, slot, items, briefing, log
         self.market, self.next = SLOTS[slot]["market"], SLOTS[slot]["next"]
         self.material = material_text(items)
         self.briefing_json = (json.dumps({k: v for k, v in briefing.items() if k != "links"}, ensure_ascii=False)
@@ -439,99 +403,6 @@ def _json_numbers(x):
 
 # ---------- 프롬프트 ----------
 
-RULES = """글쓰기 규칙:
-1. 재료에 없는 숫자 · 사건 · 종목은 쓰지 않는다.{numbers_rule}
-2. 전망 · 평가는 누가 말했는지 붙인다 ('톰 리(펀드스트랫)는 …라고 봤다'). 우리 판단처럼 쓰지 않는다.
-   말한 사람 없이 '~로 보인다 · ~로 전망된다 · ~라는 평가다 · ~가 기대된다'로 문장을 끝내지 않는다.
-   말한 사람이 있는 평가도 좋다 · 나쁘다 · 매력적이다 · '긍정적으로 평가했다' 같은 값 매김은 옮기지 않고 무엇을 근거로 어떻게 봤는지를 숫자 + 사람으로 쓴다
-   ('○○는 수익률 6%대를 높은 수준이라고 봤다').
-3. 다음 말은 쓰지 않는다: 매수 · 매도(순매수 · 순매도 포함) · 과매수 · 과매도 · 추천 · 목표 진입 · 강세론 · 약세론 ·
-   투자 기회 · 매력적 · 담을 만 · 사 둘 만 · 놓치면 안 · 유망.
-   수급은 '외국인이 사들였다 · 팔았다'처럼 쓴다. 계산 신호는 '오름 쪽 · 내림 쪽 · 평소의 n배'처럼 사실의 말로 쓴다.
-4. 실존 인물 · 회사의 비위 · 사고 주장(스캔들 · 의혹 · 수사 · 사임 · 소송 · 분식 등)은 서로 다른 채널 2곳 이상이 다뤘거나
-   블로그 데이터 news에 있을 때만, '~라고 ○○(채널 · 매체)가 전했다'로 쓴다. 한 채널만 말한 것은 쓰지 않는다.
-   제목에는 이런 말을 넣지 않는다.
-5. 자막 문장을 그대로 옮기지 않는다. 바꿔 써서 요약한다. 사람 이름은 재료에 적힌 전체 이름(성과 이름)으로 쓴다.
-6. 독자 말을 쓴다. 분류 코드(RATES_FED 등) · scope · stance · bullish · bearish · edition · D+20 · A/B · 유보 같은 내부 말은 쓰지 않는다.
-7. 종목 이름은 한글(엔비디아 · 삼성전자), 숫자는 '2.04%' · '13억 달러' 식.
-8. 문장은 모두 '-다'로 끝낸다 ('-습니다' 쓰지 않음). '테스트 중' 같은 표시를 넣지 않는다. 설명이나 머리말 없이 JSON만 출력한다."""
-
-FRAME_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 해설을 씁니다. 재료는 아래 방송 요약과 블로그 데이터뿐입니다.
-
-이번 글: {when}. {what}
-이번 호출은 **공통 틀**(글 제목 · 오늘 있었던 일 · 관전 포인트)만 씁니다. 오름 · 내림 시각은 다른 호출이 씁니다.
-어느 쪽 시각도 편들지 않습니다.
-
-오늘의 중심 사건: {center}
-이 글이 다루는 장: {label}
-
-JSON 객체 하나로만 답합니다:
-{{
-  "title_topic": "글 제목 뒤쪽. 중심 사건을 중립으로 한 구절 (20자 안팎). 예: '금리 인하 기대 꺾인 하루'. 방향을 편들지 않는다",
-  "summary": "검색 설명용 한 문장, 한글 45자 안. 그날 일어난 일만 중립으로",
-  "facts": [{facts_rule}],
-  "points": [{{"pick": 아래 관전 포인트 후보 번호, "text": "그 후보를 독자 말로 다듬은 한 줄, 30자 안"}}],
-  "tickers": ["사실 칸에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
-  "sources": [사실 칸의 근거로 쓴 영상 번호 (숫자). 방송에서 가져온 숫자가 있으면 그 영상은 꼭 넣는다]
-}}
-
-사실 칸: 해석 없이 사실만, 한 줄 한 문장. 중심 사건에 관한 사실을 먼저 쓴다. 중심 사건과 이어지지 않는 소식은 넣지 않는다.
-숫자는 사실 칸 전체에서 두세 개만.
-관전 포인트: {points_rule} 다음 장에서 무엇을 볼지(일정 · 발표 · 숫자)가 드러나게 쓰고, 예측 · 판단은 쓰지 않는다.
-시각은 쓰지 않는다(따로 붙임). 다음 장과 이어지지 않는 후보는 고르지 않는다.
-
-{rules}
-
-관전 포인트 후보 ({points_title}):
-{candidates}
-
-일정 표 (파이썬이 계산함. 일정의 날짜 말은 이 표대로만 쓰고, 표에 없는 일정에는 오늘 · 내일 · 이번 주 · 다음 주 같은 날짜 말을 붙이지 않는다):
-{schedule}
-
-블로그 데이터 (묶음 파일):
-{briefing}
-
-방송 요약 ({n}개, {span}):
-{material}
-"""
-
-VIEW_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 해설을 씁니다. 재료는 아래 방송 요약과 블로그 데이터뿐입니다.
-
-이번 글: {when}. {what}
-이번 호출에서 맡은 쪽: **{side} 쪽 시각** — 재료 가운데 {side} 쪽 근거를 모아 그 시각을 가장 설득력 있게 씁니다.
-반대쪽 시각은 다른 호출이 따로 씁니다. 이 호출에서 반대쪽을 깎아내리거나 균형을 맞추려 하지 않습니다.
-
-오늘의 중심 사건: {center}
-질문: **이 중심 사건을 {side} 쪽에서 보면 어떤가?** 중심 사건에 먼저 답하고, 다른 재료는 그 근거로만 쓴다.
-중심 사건과 이어지지 않는 재료(그날 시장 흐름과 관계없는 개별 소식)는 쓰지 않는다.
-{side} 쪽 근거로 센 방송 이슈는 [영상 번호]가 {side_videos}인 영상에 있습니다.
-
-공통 사실 (다른 호출이 이미 씀, 번호):
-{facts}
-
-JSON 객체 하나로만 답합니다:
-{{
-  "heading": "{side} 쪽 시각의 제목. 이유와 방향을 함께 말한다 (예: 'AI 투자, 실적이 받쳐 준다', '금리 부담에 비싸진 주가'). 25자 안",
-  "claim": "주장 한 문장. 중심 사건을 {side} 쪽에서 본 것. 우리 판단이 아니라 시각임이 드러나게 끝낸다 (예: '…라고 보는 쪽이다', '…라는 시각이다')",
-  "evidence": ["근거 2~3개, 한 문장씩. 근거마다 말한 사람이나 채널을 붙인다 (예: 'CNBC에서 ○○는 …라고 봤다')"],
-  "risk": "이 시각이 틀리는 조건 한 문장, 사실로 쓴다. 위 근거로 든 사건 · 숫자가 뒤집히는 조건으로 늘 '…면 이 시각은 힘을 잃는다.'로 끝낸다. {side} 쪽 주장과 반대로 일이 풀리는 조건이어야 한다 (예: '{risk_example}')",
-  "facts_used": [위 공통 사실 가운데 이 시각의 근거와 이어지는 번호],
-  "tickers": ["본문에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
-  "sources": [근거로 쓴 영상 번호 (숫자). 방송에서 가져온 숫자가 있으면 그 영상은 꼭 넣는다]
-}}
-
-{rules}
-
-일정 표 (파이썬이 계산함. 일정의 날짜 말은 이 표대로만 쓰고, 표에 없는 일정에는 오늘 · 내일 · 이번 주 · 다음 주 같은 날짜 말을 붙이지 않는다):
-{schedule}
-
-블로그 데이터 (묶음 파일):
-{briefing}
-
-방송 요약 ({n}개, {span}):
-{material}
-"""
-
 
 def _common(ctx):
     start, end = window(ctx.day, ctx.slot)
@@ -539,45 +410,17 @@ def _common(ctx):
             else "한국 마감 해설 + 오늘 밤 미국장 관전 포인트 (미국 개장 전에 읽힘)")
     if ctx.briefing:
         numbers_rule = " 지수 · 업종 · 종목 등락 숫자는 블로그 데이터를 먼저 쓴다."
-        if ctx.slot == "pm":
-            numbers_rule += " 한국 지수(코스피 · 코스닥) 종가는 블로그 데이터에 없으므로 방송에 나온 숫자만 쓴다."
+        if ctx.briefing.get("close", {}).get("figures"):   # 18절 Q20: pm 외국인 순매수 · 환율 · 금리
+            numbers_rule += (" 외국인 순매수 · 환율 · 금리는 블로그 데이터 close.figures 값을 쓴다 (v가 음수면 순매도)."
+                             " 그 값의 day가 장 날짜(trade_date)와 다르면 그 날짜를 밝혀 쓴다 ('11월 16일 외국인은 …').")
     else:
         numbers_rule = " 오늘은 블로그 데이터가 없다. 숫자는 방송에 나온 것만 쓴다."
     return dict(when=f"{ctx.day} {'아침' if ctx.slot == 'am' else '저녁'} 편", what=what,
                 center=ctx.center["text"] if ctx.center else "(정하지 못함 — 가장 많이 다룬 시장 흐름을 중심으로)",
-                rules=RULES.format(numbers_rule=numbers_rule), numbers_rule=numbers_rule,
+                numbers_rule=numbers_rule,
                 briefing=ctx.briefing_json or "(없음)",
                 schedule="\n".join(f"- {e['label']}" for e in ctx.schedule) or "(없음)",
                 n=len(ctx.items), span=f"{start:%m-%d %H:%M} ~ {end:%m-%d %H:%M} KST 받음", material=ctx.material)
-
-
-def frame_prompt(ctx):
-    if ctx.index_line:
-        facts_rule = (f'"사실 2~3줄. 맨 앞 줄은 이미 있으니 쓰지 않는다: \'{ctx.index_line}\'. 그 뒤에 이어질 줄만"')
-    else:
-        facts_rule = '"사실 3~4줄. 장 날짜 · 장 이름은 쓰지 않는다 (첫 줄 앞에 따로 붙임)"'
-    must = [n for n, c in enumerate(ctx.candidates, 1) if c["must"]]
-    points_rule = ("후보에서만 0~3개 고른다. 후보가 없으면 빈 배열." if not must else
-                   f"후보 {must[0]}번(장 시작 줄)은 늘 첫 줄로 따로 들어가니 고르지 않는다. 나머지 후보에서 0~2개 고른다.")
-    cands = "\n".join(f"{n}. {c['text']}{' (장 시작 줄, 고르지 않음)' if c['must'] else ''}"
-                      for n, c in enumerate(ctx.candidates, 1)) or "(없음 → points는 빈 배열)"
-    return FRAME_PROMPT.format(**_common(ctx), label=ctx.label, facts_rule=facts_rule, points_rule=points_rule,
-                               points_title=points_title(ctx.day, ctx.slot), candidates=cands)
-
-
-def view_prompt(ctx, d, side_videos, facts):
-    idx = {s["id"]: n for n, s in enumerate(ctx.items, 1)}
-    vids = ", ".join(str(idx[v]) for v in sorted(side_videos, key=lambda v: idx[v])) or "(없음, 데이터 근거만)"
-    common = _common(ctx)
-    if ctx.center:   # Q11: 중심 사건과 이어지지 않는 재료는 쓰지 않는다 → 시각 호출에는 중심 사건을 다룬 영상만 준다
-        only = set(ctx.center["videos"])
-        common["material"] = material_text(ctx.items, only)
-        common["n"] = f"전체 {len(ctx.items)}개 중 중심 사건을 다룬 {len(only)}"
-        vids = ", ".join(str(n) for n in sorted(only & {idx[v] for v in side_videos})) or "(중심 사건 영상에는 없음)"
-    risk_example = ("엔비디아 실적에서 데이터센터 매출이 줄면 이 시각은 힘을 잃는다." if d == "bull" else
-                    "엔비디아 실적에서 데이터센터 매출이 예상을 웃돌면 이 시각은 힘을 잃는다.")
-    return VIEW_PROMPT.format(**common, side=DIR_KO[d], side_videos=vids, risk_example=risk_example,
-                              facts="\n".join(f"{n}. {f}" for n, f in enumerate(facts, 1)))
 
 
 # ---------- 결과 검사 ----------
@@ -596,17 +439,6 @@ def _sent(x):
     return x + "." if x and x[-1] not in ".!?。…" else x
 
 
-def distinct(xs, limit=0.6):
-    """말한 사람만 다르고 내용이 거의 같은 문장은 앞의 것만 남긴다."""
-    from difflib import SequenceMatcher
-    out = []
-    for x in xs:
-        body = re.sub(r"^.*?(은|는) ", "", x, count=1)
-        if not any(SequenceMatcher(None, body, re.sub(r"^.*?(은|는) ", "", y, count=1)).ratio() >= limit for y in out):
-            out.append(x)
-    return out
-
-
 def _cut_bytes(s, n):
     b = s.encode("utf-8")
     return s if len(b) <= n else b[:n].decode("utf-8", "ignore").rstrip() + "…"
@@ -622,97 +454,6 @@ def _ints(xs):
     return out
 
 
-def pick_points(raw, candidates):
-    """장 시작 줄(must)은 늘 첫 줄. 그다음 AI가 고른 후보 번호 → 관전 포인트 줄.
-
-    후보에 없는 것은 버리고, 시각은 후보의 것을 앞에 붙인다 (45자 안, 장 시작 줄은 묶음 글 그대로라 길이를 보지 않음)."""
-    out, seen = [], set()
-    for n, c in enumerate(candidates, 1):
-        if c["must"]:
-            out.append(f"{c['time']} — {c['what']}" if c["time"] else c["what"])
-            seen.add(n)
-            break
-    for p in raw if isinstance(raw, list) else []:
-        if not isinstance(p, dict):
-            continue
-        n = (_ints([p.get("pick")]) or [0])[0]
-        text = _clean(p.get("text"))
-        if not (1 <= n <= len(candidates)) or n in seen or not text:
-            continue
-        seen.add(n)
-        t = candidates[n - 1]["time"]
-        if t:   # '장 마감 뒤 — 장 마감 후 예정된 …' · '오늘 밤 미국 장 마감 뒤 — 오늘 밤 엔비디아 …' (11-17 시험)
-            words = {t, t.replace("뒤", "후"), t.replace("후", "뒤"), "오늘 밤", "내일 밤", "오늘", "내일", "미국",
-                     "장 마감 뒤", "장 마감 후", "장 시작 전"}
-            again = True
-            while again:
-                again = False
-                for w in sorted(words, key=len, reverse=True):
-                    if w and text.startswith(w):
-                        text = text[len(w):].lstrip(" ,·—-")
-                        again = True
-                        break
-        line = f"{t} — {text}" if t else text
-        if len(line) <= 45:
-            out.append(line)
-    return out[:3]
-
-
-def frame_out(raw, ctx):
-    """공통 틀 답 → dict. 틀이 어긋나면 ValueError."""
-    if not isinstance(raw, dict):
-        raise ValueError("JSON 객체가 아님")
-    facts = [_sent(x) for x in raw.get("facts") or [] if _sent(x)]
-    out = {
-        "title_topic": _clean(raw.get("title_topic")).strip("'\"")[:40],
-        "summary": _cut_bytes(_clean(raw.get("summary")), 150),
-        "facts": facts[:3] if ctx.index_line else facts[:4],
-        "points": pick_points(raw.get("points"), ctx.candidates),
-        "tickers": raw.get("tickers") or [], "sources": _ints(raw.get("sources")),
-    }
-    return frame_ok(out, ctx)
-
-
-def frame_ok(out, ctx):
-    for k in ("title_topic", "summary"):
-        if not out[k]:
-            raise ValueError(f"{k} 비어 있음")
-    if not out["facts"] and not ctx.index_line:
-        raise ValueError("facts 비어 있음")
-    return out
-
-
-def view_out(raw, ctx):
-    if not isinstance(raw, dict):
-        raise ValueError("JSON 객체가 아님")
-    out = {
-        "heading": _clean(raw.get("heading")).strip("'\"")[:40],
-        "claim": _sent(raw.get("claim")),
-        "evidence": distinct([_sent(x) for x in raw.get("evidence") or [] if _sent(x)])[:3],
-        "risk": _sent(raw.get("risk")),
-        "facts_used": _ints(raw.get("facts_used")),
-        "tickers": raw.get("tickers") or [], "sources": _ints(raw.get("sources")),
-    }
-    return view_ok(out, ctx)
-
-
-def view_body(v):
-    return " ".join(x for x in [v["claim"], *v["evidence"], v["risk"]] if x)
-
-
-def view_ok(out, ctx):
-    if not out["heading"]:
-        raise ValueError("heading 비어 있음")
-    if not out["claim"]:
-        raise ValueError("claim 비어 있음")
-    if not out["evidence"]:
-        raise ValueError("evidence 비어 있음")
-    n = len(view_body(out))
-    if not 80 <= n <= 1200:
-        raise ValueError(f"본문 길이 {n}자")
-    return out
-
-
 # 2-3절 3 · 5 + Q14: 독자에게 내보내지 않는 말 (블로그 발행기도 같은 검사를 한다)
 FORBIDDEN = re.compile(r"매수|매도|과매수|과매도|추천|목표 진입|D\+\d+|edition|stance|\bA/B\b|유보|테스트 중|"
                        r"강세론|약세론|칼럼|bullish|bearish|"
@@ -725,7 +466,9 @@ ATTRIBUTED = re.compile(r"(전했다|보도했다|밝혔다|말했다|지적했�
 JUDGMENT_END = re.compile(r"(전망된다|전망이다|보인다|예상된다|평가다|평가된다|기대된다|관측된다|분석된다|풀이된다|"
                           r"여겨진다|판단된다|전망이 나온다|전해졌다|알려졌다|나타났다고 한다|"
                           r"전망됩니다|전망입니다|보입니다|예상됩니다|평가입니다|평가됩니다|기대됩니다|관측됩니다|분석됩니다|"
-                          r"풀이됩니다|여겨집니다|판단됩니다|전망이 나옵니다|전해졌습니다|알려졌습니다)[.。]?$")
+                          r"풀이됩니다|여겨집니다|판단됩니다|전망이 나옵니다|전해졌습니다|알려졌습니다|"
+                          # 19절 Q24 (11-17 시험: '…옮겨갔음을 보여준다' · '경계감이 형성되어 있다' · '지속되는 상태다')
+                          r"보여준다|보여줍니다|형성되어 있다|형성되어 있습니다|형성돼 있다|형성돼 있습니다|상태다|상태입니다)[.。]?$")
 # 말한 사람이 흐린 문장 (11-16 저녁 시험: '전문가들은 … 평가했다')
 # 11-17 시험: '외신이 전했다' · '매경TV 뉴스에서 증권가는' · '은행권은'
 VAGUE = re.compile(r"(^|\s)(외신|증권가|은행권|월가|시장 관계자|전문가들|전문가들은|시장에서는|시장 참여자들|업계에서는|일각에서는|투자자들은|분석가들은|애널리스트들은)")
@@ -741,7 +484,8 @@ GENERIC = {"시장", "시각", "힘을", "잃는다", "실적", "발표", "확�
 # 이름 뒤에 붙어도 이름의 일부가 아닌 말 (11-17: 재료 '조슈아 발언' → '조슈아 발언은'으로 고쳐 씀)
 NOT_NAME = {"발언", "발언자", "의견", "분석", "전망", "주장", "설명", "인터뷰", "출연", "측", "씨", "등", "역시", "또한", "이번",
             "외국인", "기관", "개인", "지수", "주가", "시장", "증시",
-            "기업공개", "상장", "실적", "발표", "규제", "업종", "종목", "금리", "잔고", "통계"}
+            "기업공개", "상장", "실적", "발표", "규제", "업종", "종목", "금리", "잔고", "통계",
+            "상승률", "하락률", "등락률", "종가", "선물"}   # 11-19 시험: '코스피(…)가'를 '코스피 상승률'의 반쪽 이름으로 봄
 SOFT = "[고쳐 보기만] "   # 고쳐 쓰게 하되, 그래도 남아도 문장은 빼지 않는다
 
 
@@ -807,14 +551,6 @@ def bad_day(s, ctx):
     return None
 
 
-FACT_OPINION = re.compile(r"(분석했다|봤다|보았다|평가했다|전망했다|언급했다|주장했다|예상했다|진단했다|해석했다|"
-                          r"경고했다|지적했다|내다봤다|강조했다|풀이했다|관측했다)[.。]?$")
-CLAIM_END = re.compile(r"(시각이다|보는 쪽이다|쪽이다|시각도 있다)[.。]?$")
-FACT_CAUSE = re.compile(r"여파로|때문에|영향으로|탓에|탓으로|에 따른|으로 인해|로 인해")
-RISK_END = re.compile(r"힘을 잃는다[.。]?$")
-OTHER_MARKET = {"US": re.compile(r"한국은행|금통위|코스피|코스닥|한국장"), "KR": None}
-
-
 def bad_when(s, ctx):
     """일정 표에 있는 일정을 다른 날짜 말로 쓴 것 (14절 1번)."""
     hit = {}   # 이름 → 그 이름의 일정들 (11-18: 실업수당 청구가 11-19 · 11-25 두 번 → 한쪽만 보고 다른 날짜 말을 막았음)
@@ -836,16 +572,6 @@ def keys_of(text):
         if len(t) >= 2 and t not in COMMON and t not in GENERIC:
             out.add(t)
     return out
-
-
-def risk_problem(v):
-    """틀리는 조건이 제목 · 주장 · 근거와 겹치는 낱말이 하나도 없으면 (11-17 시험: 수급 이야기 끝에 엔비디아 실적)."""
-    if not v.get("risk"):
-        return None
-    body = " ".join([v.get("heading", ""), v.get("claim", ""), *v.get("evidence", [])])
-    if not any(k in body for k in keys_of(v["risk"])):
-        return SOFT + "틀리는 조건이 주장 · 근거와 이어지지 않음"
-    return None
 
 
 def sentence_problems(s, ctx, title, forbidden=None):
@@ -882,143 +608,6 @@ def sentence_problems(s, ctx, title, forbidden=None):
         if h:
             out.append(f"이름이 반쪽 ('{h[0]}' → 재료에 나온 '{h[1]}'처럼 전체 이름으로)")
     return out
-
-
-def key_problems(key, s, ctx):
-    """칸마다 따로 보는 것: 사실 칸 의견 · 원인(3번), 근거의 중심 사건(4번), 관전 포인트 나라(5번)."""
-    out = []
-    if key == "claim" and not CLAIM_END.search(s.strip()):   # 11-17: 주장이 '…라고 전했다'로 바뀌어 근거와 겹침
-        out.append(SOFT + "주장은 '…라는 시각이다 · …라고 보는 쪽이다'로 끝낸다 (채널 · 사람 이야기는 근거 칸 몫)")
-    if key == "facts":
-        if FACT_OPINION.search(s.strip()):
-            out.append("사실 칸에 의견 (말한 사람의 판단은 시각 쪽 몫)")
-        m = FACT_CAUSE.search(s)
-        if m:
-            out.append(f"사실 칸에 원인 풀이 '{m.group()}'")
-    elif key == "evidence" and ctx.center_keys and not any(k in s for k in ctx.center_keys):
-        out.append(SOFT + "근거에 중심 사건 이야기가 없음")
-    elif key == "points":
-        r = OTHER_MARKET.get(ctx.next)
-        m = r.search(s) if r else None
-        if m:
-            out.append(f"다음 장과 다른 나라 일정 '{m.group()}'")
-    return out
-
-
-def units(kind, out):
-    """검사할 칸: [(칸, 번호 또는 None, 글, 제목인가)]"""
-    if kind == "frame":
-        return ([("title_topic", None, out["title_topic"], True), ("summary", None, out["summary"], True)]
-                + [("facts", i, f, False) for i, f in enumerate(out["facts"])]
-                + [("points", i, p, False) for i, p in enumerate(out["points"])])
-    return ([("heading", None, out["heading"], True), ("claim", None, out["claim"], False)]
-            + [("evidence", i, e, False) for i, e in enumerate(out["evidence"])] + [("risk", None, out["risk"], False)])
-
-
-def find_problems(kind, out, ctx):
-    """→ [(칸, 번호, 문장, 제목인가, [걸린 점])]"""
-    found = []
-    for key, i, text, title in units(kind, out):
-        for s in [text] if title or key == "points" else sentences(text):
-            p = sentence_problems(s, ctx, title)
-            p = p + key_problems(key, s, ctx)
-            if p:
-                found.append((key, i, s, title, p))
-    if kind == "view" and out.get("risk") and not RISK_END.search(out["risk"].strip()):   # 14절 6번
-        hit = [f for f in found if f[0] == "risk"]
-        msg = "틀리는 조건은 '…면 이 시각은 힘을 잃는다.'로 끝낸다"
-        if hit:
-            hit[0][4].append(msg)
-        else:
-            found.append(("risk", None, out["risk"], False, [msg]))
-    if kind == "view":
-        p = risk_problem(out)
-        if p:
-            hit = [f for f in found if f[0] == "risk"]
-            if hit:
-                hit[0][4].append(p)
-            else:
-                found.append(("risk", None, out["risk"], False, [p]))
-    return found
-
-
-def drop_sentences(out, found):
-    """걸린 문장만 뺀다 (고쳐 쓰게 해도 남은 것). 빈 줄이 된 사실 · 근거는 줄째 뺀다."""
-    out = {k: (list(v) if isinstance(v, list) else v) for k, v in out.items()}
-    for key, i, s, _, _ in found:
-        if i is None:
-            out[key] = " ".join(x for x in sentences(out[key]) if x != s)
-        else:
-            out[key][i] = "" if key == "points" else " ".join(x for x in sentences(out[key][i]) if x != s)
-    for key in ("facts", "evidence", "points"):
-        if key in out:
-            out[key] = [x for x in out[key] if x.strip()]
-    return out
-
-
-FIX_PROMPT = """아래 JSON은 시황 해설 원고입니다. 다음 문장에 걸린 점이 있습니다.
-{problems}
-
-고치는 법:
-- 쓰면 안 되는 말: 같은 뜻의 사실 말로 바꾼다 ('외국인이 순매도했다' → '외국인이 주식을 팔았다', '매도 의견' → '낮춰 잡은 의견',
-  '추천 종목' → '꼽은 종목', '매력적인 투자 기회라고 봤다' → '○○는 지금 수준을 낮다고 봤다'처럼 숫자 · 사람으로)
-- 말한 사람 없는 판단 · 말한 사람이 흐림: 원고 안에 그렇게 말한 사람 · 채널이 나와 있으면 '○○는 …라고 봤다'로 고치고, 없으면 그 문장을 뺀다
-- 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 빼고 쓴다
-- 날짜 말이 일정과 다름: 걸린 점에 적힌 날짜 말로 고치거나 날짜 말을 뺀다
-- 사실 칸에 의견: 그 줄을 뺀다 (사실 칸은 일어난 일만). 사실 칸에 원인 풀이: '~여파로 · ~때문에' 같은 원인 부분을 빼고 일어난 일만 쓴다
-- 근거에 중심 사건 이야기가 없음: 중심 사건과 이어지는 근거로 바꾸거나 그 근거를 뺀다
-- 다음 장과 다른 나라 일정: 그 관전 포인트를 뺀다
-- 틀리는 조건 끝맺음: '…면 이 시각은 힘을 잃는다.'로 끝나게 고친다
-- 주장 끝맺음: 채널 · 사람 이름 없이 '…라는 시각이다' · '…라고 보는 쪽이다'로 고친다. 비위 주장은 주장 문장에 넣지 않는다
-- 이름이 반쪽: 재료에 나온 전체 이름(성과 이름)으로 고친다
-- 틀리는 조건이 주장 · 근거와 이어지지 않음: 이 시각의 근거로 든 사건 · 숫자가 뒤집히면 힘을 잃는다는 한 문장으로 다시 쓴다
-- 비위 · 사고 주장: 채널 수가 모자라면 본문에서 그 문장을 빼고, '전했다'가 없으면 원고 안에 나온 채널 · 매체를 붙여
-  '~라고 ○○가 전했다'로 고친다 (원고에 출처가 없으면 그 문장을 뺀다). 제목에서는 그 말을 빼고 중립 구절로 쓴다
-걸린 문장만 고치고 나머지 문장과 칸은 그대로 두고, 같은 틀의 JSON 하나로만 답합니다. '-다'체를 지킨다.
-
-{draft}
-"""
-
-
-def ask(kind, prompt, ctx, log=print):
-    """한 호출(공통 틀 · 한 시각). 걸린 문장은 그 문장만 고쳐 쓰게 한 번 더, 그래도 남으면 그 문장을 뺀다.
-
-    호출 실패 · 틀 어긋남 · 제목에 걸린 점이 남으면 예비 모델로. 다 안 되면 Skip."""
-    norm, ok = (frame_out, frame_ok) if kind == "frame" else (view_out, view_ok)
-    last = None
-    for model in MODELS:
-        config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = model, "off"
-        try:
-            raw = llm.generate_json(prompt, log=log, what=f"시황 해설 {kind} {model}")
-            out = norm(raw, ctx)
-            found = find_problems(kind, out, ctx)
-            if found:
-                log(f"  {model} {kind}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함")
-                for _, _, s, _, p in found:
-                    log(f"    - {' · '.join(p)}:", s)
-                probs = "\n".join(f'- "{s}" → {" · ".join(p)}' for _, _, s, _, p in found)
-                raw = llm.generate_json(FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
-                                        log=log, what=f"시황 해설 고쳐 쓰기 {kind} {model}")
-                out = norm(raw, ctx)
-                found = find_problems(kind, out, ctx)
-                if any(title for _, _, _, title, _ in found):
-                    raise ValueError("제목에 걸린 점 남음: " + " · ".join(
-                        x for _, _, _, title, p in found if title for x in p))
-                for _, _, s, _, p in found:
-                    if all(x.startswith(SOFT) for x in p):
-                        log(f"    그대로 둠 ({' · '.join(p)}):", s)
-                found = [f for f in found if not all(x.startswith(SOFT) for x in f[4])]
-                if found:
-                    for _, _, s, _, p in found:
-                        log(f"    문장 뺌 ({' · '.join(p)}):", s)
-                    out = ok(drop_sentences(out, found), ctx)
-            return out, f"gemini:{model}"
-        except llm.LLMError as e:
-            last = f"호출 실패 ({e})"
-        except ValueError as e:
-            last = f"틀 어긋남 ({e})"
-        log(f"  {model} {kind}: {last}")
-    raise Skip("금지 표현" if last and ("쓰면 안 되는 말" in last or "제목에" in last) else "호출 실패")
 
 
 def known_tickers(items, briefing):
@@ -1178,116 +767,62 @@ def unify_names(texts, log):
     return reps
 
 
-def compose(day, slot, items, briefing, log=print):
-    """재료 → columns 문서 칸 (status 제외). 쓰지 않을 편이면 Skip.
-
-    호출: 공통 틀(제목 · 사실 · 관전 포인트, 중립) 1번 → 근거가 넉넉한 시각마다 1번. 세 호출 모두 같은 중심 사건을 받는다 (Q11)."""
-    market = SLOTS[slot]["market"]
-    if briefing and briefing.get("session") == "closed":
-        raise Skip("휴장")
-    if not items:
-        raise Skip("영상 없음")
-    counts, pool, videos = count_evidence(items, briefing, market)
-    log(f"근거: 오름 {counts['bull']} · 내림 {counts['bear']} (건수에 든 이슈 {pool}건)")
-    dirs = [d for d in ("bull", "bear") if enough(counts[d])]
-    base = {"counts": counts, "briefing": f"{day}-{slot}" if briefing else None}
-    if not dirs:
-        raise Skip("재료 부족", base)
-    ctx = Ctx(day, slot, items, briefing, log)
-    log(f"장: {ctx.label} · 중심 사건:", ctx.center['text'] if ctx.center else '없음')
-    for n, c in enumerate(ctx.candidates, 1):   # 관전 포인트가 어디서 왔는지 (묶음 일정 · 방송 주제)
-        log(f"  관전 포인트 후보 {n}:", c['text'])
-    base["center"] = {"category": ctx.center["category"], "label": ctx.center["label"],
-                      "channels": ctx.center["channels"]} if ctx.center else None
-    try:   # 한쪽만 실수로 나가지 않게 어느 호출이든 안 되면 그 편 전체 skip. 센 건수는 남긴다
-        frame, m0 = ask("frame", frame_prompt(ctx), ctx, log)
-        same = ctx.index_line.rstrip(".")   # AI가 지수 줄을 그대로 다시 쓰는 일 (11-17 시험)
-        facts = ([ctx.index_line] if ctx.index_line else []) + [f for f in frame["facts"] if not same or f.rstrip(".") != same]
-        if not ctx.index_line and ctx.label not in facts[0]:
-            facts[0] = f"{ctx.label}: {facts[0]}"   # Q15: 첫 줄은 어느 장 이야기인지로 시작 (파이썬이 붙임)
-        views = []
-        for d in dirs:
-            v, m = ask("view", view_prompt(ctx, d, videos[d], facts), ctx, log)
-            views.append((d, v, m))
-    except Skip as e:
-        raise Skip(e.args[0], base) from e
-    # Q12: 사실 칸은 첫 줄(장 · 지수)과 어느 시각에서든 쓰인 줄만 남긴다
-    used = {n for _, v, _ in views for n in v["facts_used"]}
-    kept = [f for n, f in enumerate(facts, 1) if n == 1 or n in used]
-    if len(kept) < len(facts):
-        log(f"사실 칸: 두 시각 어디에도 안 쓰인 {len(facts) - len(kept)}줄 뺌")
-    body = [{"dir": d, "heading": v["heading"], "body": view_body(v)} for d, v, _ in views]
-    kept, body = resolve_conflicts(kept, body, ctx, log)   # 14절 2번
-    reps = unify_names([*kept, *(b["body"] for b in body)], log)   # 14절 7번
-    for x, y in reps.items():
-        kept = [f.replace(x, y) for f in kept]
-        for b in body:
-            b["heading"], b["body"] = b["heading"].replace(x, y), b["body"].replace(x, y)
-    text = " ".join([frame["title_topic"], frame["summary"], *kept, *frame["points"],
-                     *(x for b in body for x in (b["heading"], b["body"]))])
-    tickers = [t for t in dict.fromkeys(str(x).strip().upper() for r in [frame] + [v for _, v, _ in views]
-                                        for x in r["tickers"])
-               if t in ctx.tickers and mentioned(t, ctx.tickers[t], text)]
-    sources = []
-    for r in [frame] + [v for _, v, _ in views]:
-        for n in r["sources"]:
-            if 1 <= n <= len(items) and items[n - 1]["id"] not in sources:
-                sources.append(items[n - 1]["id"])
-    lack = [d for d in ("bull", "bear") if d not in dirs]
-    dt = datetime.strptime(day, "%Y-%m-%d")
-    return {
-        **base,
-        "date": day, "slot": slot, "reason": "",
-        "title": f"{dt.month}.{dt.day:02d} 시황 해설 — {frame['title_topic']}",
-        "summary": frame["summary"],
-        "facts": kept,
-        "views": body,
-        "missing": {"dir": lack[0], "line": missing_line(lack[0], counts[lack[0]], pool)} if lack else None,
-        "pointsTitle": points_title(day, slot),
-        "points": frame["points"],
-        "tickers": tickers,
-        "sources": sources,
-        "model": " · ".join(dict.fromkeys([m0] + [m for _, _, m in views])),
-    }
-
-
 # ---------- 이어 쓰는 글 (11-17 사용자: 칸 채우기 글은 맥락이 없다 → 흐름이 있는 시황으로) ----------
 # 지금은 시험 모드(--story, 저장 안 함). 블로그와 새 칸 형식을 맞춘 뒤 compose를 이 틀로 바꾼다 (요청 문서 17절).
 # 호출: 글 전체 1번 → 걸린 문장이 있으면 그 문장만 고쳐 쓰게 1번 → 그래도 남으면 그 문장을 문단에서 뺀다.
 
 STORY_MODEL = "gemini-4-hydrogen"   # 11-18 사용자 결정: 3.6 flash보다 글이 낫고 503 기다림 없음 · 받아쓰기(3.6 flash)와 한도가 갈림
                                     # flash-lite로는 넘어가지 않는다 (11-17: 문단이 얇고, 고쳐 쓰다 출처를 지어냄)
-STORY_WAIT_MIN = 30    # 호출이 안 되면(한도 · 혼잡) 이만큼까지 기다리며 다시 해 본다. 그래도 안 되면 그 편 skip
+STORY_WAIT_MIN = 30    # 호출이 안 되면(한도 · 혼잡) 이만큼까지 기다리며 다시 해 본다 (마감 안에서만, 21절). 그래도 안 되면 그 편 skip
 STORY_PAUSE_SEC = 300  # 두 키가 다 안 됐을 때 다음 시도까지 쉬는 시간
-STORY_REWRITES = 3     # 틀이 어긋나면(제목에 걸린 점 등) 처음부터 다시 쓰는 횟수
+STORY_REWRITES = 2     # 틀이 어긋나면(제목에 걸린 점 등) 처음부터 다시 쓰는 횟수
+# 편당 요청 상한 (키마다, 재시도 · 고쳐 쓰기 · 다시 쓰기 · 기다린 뒤 다시 모두 포함). Hydrogen 무료 하루 20회 (11-18 AI Studio)
+# → 두 편 12회 + 받아쓰기 예비(4-hydrogen) · 손 시험 몫 8회. 보통 편은 글 1 + 고쳐 쓰기 0 ~ 2 = 1 ~ 3회
+STORY_BUDGET = 6
+STORY_ATTEMPTS = 2     # 호출 하나에 보내는 요청 수 (503 · 깨진 JSON이면 한 번 더). 429는 기다리지 않고 바로 다음 키
+
+
+class OutOfBudget(llm.LLMError):
+    """모든 키가 이 편 요청 상한을 다 씀. 기다려도 소용없다."""
 
 
 def story_keys():
-    """(이름, 키) — 기본 키, 그다음 예비 키(GEMINI_API_KEY_BACKUP, 있으면)."""
+    """[{name, key, used}] — 기본 키, 그다음 예비 키(GEMINI_API_KEY_BACKUP, 있으면). used = 이 편에서 보낸 요청 수."""
     if config.LLM_PROVIDER == "nvidia":
-        return [("NVIDIA 키", None)]
-    keys = [("기본 키", config.GEMINI_API_KEY)]
+        return [{"name": "NVIDIA 키", "key": None, "used": 0}]
+    keys = [{"name": "기본 키", "key": config.GEMINI_API_KEY, "used": 0}]
     if config.GEMINI_API_KEY_BACKUP and config.GEMINI_API_KEY_BACKUP != config.GEMINI_API_KEY:
-        keys.append(("예비 키", config.GEMINI_API_KEY_BACKUP))
+        keys.append({"name": "예비 키", "key": config.GEMINI_API_KEY_BACKUP, "used": 0})
     return keys
 
 
 def story_call(prompt, what, keys, log):
-    """기본 키로 안 되면 예비 키로. 둘 다 안 되면 LLMError. 된 키를 맨 앞으로 옮겨 다음 호출도 그 키부터 쓴다."""
+    """기본 키로 안 되면 예비 키로. 둘 다 안 되면 LLMError (둘 다 상한을 다 썼으면 OutOfBudget).
+    된 키를 맨 앞으로 옮겨 다음 호출도 그 키부터 쓴다."""
     import transcribe
     last = None
-    for i, (name, key) in enumerate(list(keys)):
-        if key is not None:
-            config.GEMINI_API_KEY, transcribe._client = key, None
+    for i, k in enumerate(list(keys)):
+        left = STORY_BUDGET - k["used"]
+        if left <= 0:
+            log(f"  {k['name']}: 이 편 요청 {STORY_BUDGET}번을 다 씀" + (" → 다음 키로" if i + 1 < len(keys) else ""))
+            continue
+        if k["key"] is not None:
+            config.GEMINI_API_KEY, transcribe._client = k["key"], None
+        before = llm.requests_made
         try:
-            r = llm.generate_json(prompt, log=log, what=f"{what} ({name})")
+            r = llm.generate_json(prompt, log=log, what=f"{what} ({k['name']})",
+                                  attempts=min(STORY_ATTEMPTS, left), wait_429=False)
         except llm.LLMError as e:
             last = e
-            log(f"  {name}: 호출 실패 ({e})" + (" → 다음 키로" if i + 1 < len(keys) else ""))
+            log(f"  {k['name']}: 호출 실패 ({e})" + (" → 다음 키로" if i + 1 < len(keys) else ""))
             continue
+        finally:
+            k["used"] += llm.requests_made - before
         if i:
             keys.insert(0, keys.pop(i))
         return r
+    if all(k["used"] >= STORY_BUDGET for k in keys):
+        raise OutOfBudget(f"모든 키가 이 편 요청 상한 {STORY_BUDGET}번을 다 씀")
     raise last
 
 STORY_RULES = """글쓰기 규칙:
@@ -1305,10 +840,12 @@ STORY_RULES = """글쓰기 규칙:
    추천 · 유망 · 매력적 · 투자 기회 같은 말은 쓰지 않는다. 수급은 '매도 · 매수 · 순매도 · 순매수 · 매도세'로 쓴다 ('팔자 · 사자'는 쓰지 않는다).
 5. 실존 인물 · 회사의 비위 · 사고 주장(스캔들 · 의혹 · 수사 · 사임 · 소송 등)은 서로 다른 채널 2곳 이상이 다뤘거나 블로그 데이터 news에
    있을 때만 쓰고, 그 문장은 '~라고 ○○(채널 · 매체)가 전했습니다'로 끝낸다. 제목 · 소제목에는 넣지 않는다.
-6. 자막 문장을 그대로 옮기지 않는다. 사람 이름은 재료에 적힌 전체 이름으로 쓴다.
+6. 자막 문장을 그대로 옮기지 않는다. 사람은 글에서 처음 나올 때 '이름 성(소속 직함)'으로 쓴다 ('톰 리(펀드스트랫 리서치 대표)').
+   재료에 이름이 한 토막뿐이면('이사벨') 그 이름은 쓰지 않고 소속 · 직함으로만 쓴다 ('BNP 파리바 전략가는').
 7. 쉬운 말로 쓴다. '투심 · 하방 압력 · 유동성 재편 · 차익 실현세 · 견인 · 이중고 · 극대화' 같은 상투어 대신
    '투자 심리 · 내리는 힘 · 돈이 옮겨 간다 · 이익을 챙기려는 매도 · 이끌었습니다'처럼 풀어 쓴다.
    분류 코드 · scope · stance · bullish 같은 내부 말은 쓰지 않는다. 종목 이름은 한글, 숫자는 '2.04%' 식.
+   등락은 부호(+ · − · -)를 붙이지 않고 방향 말로 쓴다 ('1.82% 하락', '0.40% 상승'). 블로그 데이터의 음수 등락도 이렇게 바꿔 쓴다.
 8. 문장은 모두 '-습니다'체로 끝낸다 ('마감했습니다', '이끌었습니다', '변수입니다'). '-다'체('마감했다')는 쓰지 않는다.
    제목 · 소제목 · 관전 포인트 · 표는 명사로 끝나는 구절이다. 설명이나 머리말 없이 JSON만 출력한다."""
 
@@ -1324,7 +861,7 @@ STORY_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 
 
 JSON 객체 하나로만 답합니다:
 {{
-  "title": "제목. 무슨 일로 장이 어떻게 됐는지가 드러나게 (30자 안팎). 예: '금리 인하 기대 꺾이며 기술주 약세, 나스닥 1.2% 내려'",
+  "title": "그날 주제 (30자 안팎). 무슨 일로 장이 어떻게 됐는지. 날짜 · '시황' 같은 앞머리와 줄표(—)는 쓰지 않는다 (블로그가 붙임). 예: '앤트로픽 IPO와 엔비디아 악재에 기술주 급락, 나스닥 2.47% 하락'",
   "summary": "검색 설명용 한 문장, 45자 안",
   "overview": "한눈에 보기. {overview_len} 한 문단. 지수가 어떻게 끝났고, 무엇이 장을 움직였고, 그 흐름이 다음 장에 어떻게 이어지는지",
   "market": "지수 · 업종 흐름. 3~4문장 한 문단. {market_rule}",
@@ -1335,7 +872,8 @@ JSON 객체 하나로만 답합니다:
   ],
   "sectors": [{{"name": "업종 이름 (블로그 데이터 close.sectors에 적힌 그대로)", "check": "다음 장에서 볼 것 한 구절 (20자 안)"}}],
   "checks": ["다음 장에서 확인할 것 1~2줄. 아래 후보와 일정 표에서 고른다. 각 줄은 '무엇 — 왜 보는지'를 명사로 끝나는 한 구절로 (예: '엔비디아 실적 — 데이터센터 매출이 예상을 넘는지'). 40자 안"],
-  "one_line": "오늘의 핵심 한 줄. 권유나 예측이 아니라 지금 시장이 어떤 상태인지 한 문장 ('-습니다'체)",
+  "one_line": "오늘의 핵심 한 줄. 권유나 예측이 아니라 오늘 장에서 일어난 일의 핵심을 사실 한 문장으로 ('-습니다'체). '…상태입니다 · …보여줍니다'로 끝내지 않는다",
+  "banner": {{"titles": [["첫 줄", "둘째 줄"], ["첫 줄", "둘째 줄"]], "keys": ["무엇 + 방향 낱말", "…"]}},
   "tickers": ["본문에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
   "sources": [근거로 쓴 영상 번호 (숫자)]
 }}
@@ -1345,6 +883,12 @@ drivers: 변수는 아래 '변수 후보'에서만 고르고 후보 번호를 ca
 {drivers_rule}
 sectors: {sectors_rule}
 checks: {checks_rule}
+banner (글 맨 위 그림에 얹는 짧은 글자. 그날 주제(title)를 짧게 줄인 말이고 새 주장을 넣지 않는다):
+- titles: 제목 후보 2~3개, 좋은 것부터. 후보마다 [첫 줄, 둘째 줄]. 첫 줄 = 무슨 일, 둘째 줄 = 그래서 지금.
+  띄어쓰기를 빼고 줄마다 한글 10자 이내 (예: ["기술주 내림 뒤", "엔비디아 실적 기다림"], ["기술주 급락", "실적 대기"]).
+- keys: 시장 요약 2~3개, 띄어쓰기를 빼고 다 합쳐 한글 20자 이내. '무엇 + 방향 낱말' 꼴로, 방향 낱말
+  (강세 · 약세 · 오름 · 내림 · 상승 · 하락 · 반등 · 관망 · 급락 · 급등 · 보합)을 끝에 둔다 (예: "미국 기술 업종 약세").
+- 숫자 · % · 금액을 넣지 않는다. 줄표(—)를 쓰지 않는다. 비위 · 사고 낱말과 권하는 말은 제목과 같이 쓰지 않는다.
 
 {rules}
 
@@ -1373,9 +917,11 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
 - 비위 · 사고 주장: 문장을 '~라고 ○○(채널 · 매체)가 전했습니다'로 끝낸다. ○○는 재료에 나온 채널 · 매체 이름이다 ('외신 · 업계'는 안 됨).
   재료에서 한 곳만 말했으면 그 내용을 빼고 문장을 다시 쓴다
 - 말한 사람이 흐림: '외신 · 증권가 · 투자자들은' 대신 재료의 이름 · 채널을 쓰거나, 주어를 사실(지수 · 종목 · 기관)로 바꾼다
-- 재료에 없는 숫자 · 날짜: 그 숫자 · 날짜를 뺀다. 다른 숫자로 바꿔 넣지 않는다.
+- 재료에 없는 숫자 · 날짜, 원본(자막)에서 확인되지 않는 숫자: 그 숫자 · 날짜를 뺀다. 다른 숫자로 바꿔 넣지 않는다.
   숫자를 빼면 알맹이가 없어지는 문장('외국인이 물량을 내놓으며 수급을 흔들었습니다')은 문장째 빼고 앞뒤 문장을 잇는다
 - 소속 · 직함이 재료와 다름: 재료에 적힌 소속 · 직함으로 고치거나 괄호 · 직함을 뺀다
+- 이름 한 토막: 재료에 성까지 있으면 '이름 성(소속 직함)'으로, 없으면 이름을 빼고 '소속 직함'으로 쓴다 ('BNP 파리바 전략가는')
+- 핵심 한 줄에 비위 · 사고 낱말: 그 낱말 없이 장에서 일어난 일로 다시 쓴다
 - 재료에 없는 이름 · 말한 곳: 재료에 적힌 이름 · 채널로 고친다. 재료에서 찾을 수 없으면 그 문장을 빼고 앞뒤를 잇는다
 - 권하는 말투: 명사로 끝나는 구절이나 사실 문장으로 고친다
 - 상투어: 같은 뜻의 쉬운 말로 풀어 쓴다
@@ -1543,7 +1089,8 @@ def story_out(raw, ctx):
     if not isinstance(raw, dict):
         raise ValueError("JSON 객체 아님")
     out = {k: plain(_clean(raw.get(k))) for k in ("title", "summary", *STORY_PARAS)}
-    ds = [{"heading": plain(_clean(d.get("heading"))), "body": plain(_clean(d.get("body"))),
+    out["title"] = undash(re.sub(r"^\d{1,2}\.\d{1,2}\s*(시황(\s*해설)?)?\s*[—–-]\s*", "", out["title"]))   # 19절 Q22: 주제만
+    ds = [{"heading": undash(plain(_clean(d.get("heading")))), "body": plain(_clean(d.get("body"))),
            "cand": (_ints([d.get("cand")]) or [0])[0]}
           for d in raw.get("drivers") or [] if isinstance(d, dict) and _clean(d.get("body"))]
     n = len(ctx.driver_cands)
@@ -1556,9 +1103,12 @@ def story_out(raw, ctx):
                 ds.append(d)
     out["drivers"] = ds[:ctx.shape["max"]]
     out["min_drivers"] = ctx.shape["min"]
-    moves = {x.get("name"): _pct(x.get("chg_pct")) for x in ((ctx.briefing or {}).get("close") or {}).get("sectors") or []}
-    out["sectors"] = [{"name": _clean(x.get("name")), "move": moves[_clean(x.get("name"))], "check": plain(_clean(x.get("check")))}
-                      for x in raw.get("sectors") or [] if isinstance(x, dict) and moves.get(_clean(x.get("name")))][:5]
+    # 18절 Q19: 등락은 글이 아니라 숫자 칸 chg_pct (묶음 close.sectors 값 그대로). 블로그가 색 · 부호를 그린다
+    moves = {x.get("name"): x.get("chg_pct") for x in ((ctx.briefing or {}).get("close") or {}).get("sectors") or []
+             if _pct(x.get("chg_pct"))}
+    out["sectors"] = [{"name": _clean(x.get("name")), "chg_pct": float(moves[_clean(x.get("name"))]),
+                       "check": plain(_clean(x.get("check")))}
+                      for x in raw.get("sectors") or [] if isinstance(x, dict) and _clean(x.get("name")) in moves][:5]
     if not ctx.shape["table"]:
         out["sectors"] = []
     must = [c for c in ctx.candidates if c["must"]]
@@ -1570,7 +1120,56 @@ def story_out(raw, ctx):
     out["first"], out["checks"] = first, checks[:2]
     out["tickers"] = [str(x) for x in raw.get("tickers") or []]
     out["sources"] = _ints(raw.get("sources") or [])
+    out["banner"] = raw.get("banner") if isinstance(raw.get("banner"), dict) else {}
     return out
+
+
+def undash(t):
+    """줄표 ' — '는 쓰지 않는다 (19절 블로그 디자인 규칙 — 쉼표로)."""
+    return re.sub(r"\s*[—–]\s*", ", ", t or "").strip(", ")
+
+
+def hangul_len(t):
+    """띄어쓰기 · 가운뎃점을 뺀 글자 수 (22절 Q27 배너 길이)."""
+    return len(re.sub(r"[\s·]", "", t or ""))
+
+
+BANNER_BAD = re.compile(r"[\d%]|억|달러|조\s*원")
+
+
+def banner_out(raw, log=print):
+    """22절 Q27 banner 칸. 숫자 · 금지 낱말 · 비위 낱말 · 권하는 말이 든 후보는 버린다 (고쳐 쓰기 호출은 하지 않음).
+    길이를 넘은 후보는 버리지 않고 뒤로 (블로그가 줄여 그린다). 다 버려지면 빈 칸 → 블로그는 글 제목으로 그린다."""
+    def bad(t):
+        m = BANNER_BAD.search(t) or STORY_FORBIDDEN.search(t) or ALLEGATION.search(t) or ADVICE_END.search(t)
+        return m.group() if m else None
+    titles = []
+    for c in (raw or {}).get("titles") or []:
+        lines = [undash(plain(_clean(x))) for x in (c if isinstance(c, list) else [c])][:2]
+        lines = [x for x in lines if x]
+        why = next((b for b in map(bad, lines) if b), None) if lines else "빈 후보"
+        if why:
+            log("  배너 제목 후보 뺌:", f"{' / '.join(lines)} ({why})")
+            continue
+        titles.append(lines)
+    titles.sort(key=lambda c: any(hangul_len(x) > 10 for x in c))   # 길이 안에 드는 후보를 앞으로 (안에서는 원래 순서)
+    keys = []
+    for x in (raw or {}).get("keys") or []:
+        x = undash(plain(_clean(x)))
+        why = bad(x) if x else "빈 칸"
+        if why:
+            log("  배너 요약 뺌:", f"{x} ({why})")
+            continue
+        keys.append(x)
+    keys = keys[:3]
+    while len(keys) > 2 and sum(map(hangul_len, keys)) > 20:
+        keys.pop()
+    for c in titles:
+        if any(hangul_len(x) > 10 for x in c):
+            log("  배너 제목 후보가 줄마다 10자를 넘음 (블로그가 줄여 그림):", " / ".join(c))
+    if sum(map(hangul_len, keys)) > 20:
+        log("  배너 요약이 20자를 넘음 (블로그가 줄여 그림):", " · ".join(keys))
+    return {"titles": titles[:3], "keys": keys}
 
 
 def story_ok(out):
@@ -1618,6 +1217,12 @@ def speaker_problems(s, ctx):
                 if people:
                     out.append(f"이름이 반쪽 ('{name}' → 재료에 나온 '{people[0]}'처럼 전체 이름으로)")
                     continue
+            # 11-19 블로그: '이사벨(BNP 파리바)'처럼 외국 사람 이름 한 토막 → 성까지, 없으면 이름을 빼고 소속 · 직함만
+            if not fulls and re.fullmatch(r"[가-힣]{2,5}", name) and foreign_name(name, ctx):
+                out.append(f"{AFFIL}'{name}'은 이름 한 토막 (재료에 성까지 있으면 '이름 성({aff})'으로, 없으면 이름을 빼고 '{aff}'처럼 소속 · 직함만)")
+                p = s[m.end():m.end() + 1]
+                strip[m.group(0) + p] = aff + josa(aff, p)
+                continue
         if not any(t in src for t in toks if len(t) >= 2) and name not in src:
             out.append(f"재료에 없는 이름 '{name}' (재료에 적힌 이름으로 쓰거나 그 문장을 뺀다)")
             continue
@@ -1656,6 +1261,66 @@ def speaker_problems(s, ctx):
     return out, strip
 
 
+def foreign_name(name, ctx):
+    """그 이름이 나온 영상이 모두 외국 방송(원래 제목에 한글이 없음)이면 외국 사람 → 한 토막 이름은 성이 빠진 것."""
+    hit = [it for n, it in enumerate(ctx.items, 1) if name in _video_block(ctx, n)]
+    return bool(hit) and all(not re.search(r"[가-힣]", str(it.get("title") or "")) for it in hit)
+
+
+def _video_block(ctx, n):
+    if not hasattr(ctx, "_vblocks"):
+        ctx._vblocks = {i: material_text(ctx.items, {i}) for i in range(1, len(ctx.items) + 1)}
+    return ctx._vblocks.get(n, "")
+
+
+def josa(word, p):
+    """word 뒤에 붙일 조사 p (은/는 · 이/가)를 받침에 맞춘다. 마지막 글자가 한글이 아니면 그대로."""
+    c = (word or " ")[-1]
+    if not ("가" <= c <= "힣") or p not in ("은", "는", "이", "가"):
+        return p
+    has = (ord(c) - 0xAC00) % 28 != 0
+    return {"은": "은", "는": "은", "이": "이", "가": "이"}[p] if has else {"은": "는", "는": "는", "이": "가", "가": "가"}[p]
+
+
+def raw_numbers(ctx):
+    """원본 대조용 (11-19 블로그: 묶음에 없는 숫자는 수집기가 원본과 대조). 영상마다 요약 숫자 · 자막 숫자, 묶음 숫자."""
+    if hasattr(ctx, "_raw"):
+        return ctx._raw
+    import store
+    import summarize
+    store.init()
+    vids, subs = {}, {}
+    for n, it in enumerate(ctx.items, 1):
+        vids[n] = summarize.source_numbers(_video_block(ctx, n))
+        try:
+            t = store.get_transcript_text(it["id"])
+        except Exception:   # 읽기 실패는 대조 못 함으로 둔다
+            t = None
+        subs[n] = summarize.source_numbers(t) if t else None
+    brief = summarize.source_numbers(ctx.briefing_json) + [(k, abs(v)) for v in _json_numbers(ctx.briefing) for k in ("n", "%")]
+    ctx._raw = {"videos": vids, "subs": subs, "brief": brief,
+                "missing": sum(1 for v in subs.values() if v is None)}
+    if ctx.log:
+        ctx.log(f"원본 대조: 영상 {len(subs)}개 중 자막 없음 {ctx._raw['missing']}개")
+    return ctx._raw
+
+
+def raw_number_problem(s, ctx):
+    """묶음에 없는 숫자가 그 숫자를 요약에 담은 영상의 자막(원본)에도 있는지. 없으면 그 숫자."""
+    import summarize
+    raw = raw_numbers(ctx)
+
+    def has(v, kind, xs):
+        return any(k == kind and abs(v - x) <= max(abs(x), 1e-9) * 0.02 for k, x in xs)
+    for kind, v in summarize._vals(s, hedge_check.KO_NUM, hedge_check.KO_UNIT, skip_dates=True):
+        if (kind == "n" and v <= 10 and v == int(v)) or has(v, kind, raw["brief"]):
+            continue   # 작은 정수는 안 봄 · 묶음 숫자는 블로그가 대조
+        vids = [n for n, xs in raw["videos"].items() if has(v, kind, xs)]
+        if vids and not any(raw["subs"][n] is None or has(v, kind, raw["subs"][n]) for n in vids):
+            return f"{v:g}{'%' if kind == '%' else ''}"
+    return None
+
+
 def story_replace(out, old, new):
     for k in ("summary", *STORY_PARAS):
         out[k] = out[k].replace(old, new)
@@ -1666,6 +1331,7 @@ def story_replace(out, old, new):
 def story_problems(out, ctx):
     """[(문장, 제목인가, [걸린 점])]. 제목 · 소제목은 title 규칙으로 본다."""
     units = [(out["title"], True)] + [(d["heading"], True) for d in out["drivers"]] + [(out["summary"], False)]
+    one = out["one_line"]   # 18절 Q19: 핵심 한 줄도 제목 칸처럼 비위 낱말을 넣지 않는다
     units += [(x, False) for k in STORY_PARAS for x in sentences(out[k])]
     units += [(x, False) for d in out["drivers"] for x in sentences(d["body"])]
     prose = {x for x, title in units if not title}   # 문장으로 쓰는 칸만 '-습니다'체를 본다 (관전 포인트 · 표는 구절)
@@ -1673,6 +1339,12 @@ def story_problems(out, ctx):
     found = []
     for s, title in units:
         p = sentence_problems(s, ctx, title, STORY_FORBIDDEN)
+        if not any(x.startswith("재료에 없는 숫자") for x in p):
+            x = raw_number_problem(s, ctx)
+            if x:
+                p.append(f"원본(자막)에서 확인되지 않는 숫자 {x} (요약에만 있음)")
+        if s == one and ALLEGATION.search(s):
+            p.append(f"핵심 한 줄에 '{ALLEGATION.search(s).group()}' 같은 말을 넣지 않는다")
         if s in prose and not POLITE_END.search(s.strip()):
             p.append("'-습니다'체가 아님 ('내렸다'를 '내렸습니다'로)")
         if not title and ADVICE_END.search(s.strip()):
@@ -1714,8 +1386,11 @@ def story_drop(out, found):
     return out
 
 
-def story_compose(day, slot, items, briefing, model=None, log=print):
-    """재료 → 이어 쓰는 글 칸. 안 되면 Skip."""
+def story_compose(day, slot, items, briefing, model=None, log=print, deadline=None):
+    """재료 → columns 문서 칸 (status 제외). 쓰지 않을 편이면 Skip.
+
+    호출: 글 전체 1번 → 걸린 문장만 고쳐 쓰기 최대 2번 → 그래도 남으면 그 문장을 뺀다. 틀이 어긋나면 처음부터 (STORY_REWRITES).
+    호출이 안 되면 STORY_PAUSE_SEC 쉬고 다시, 마감(deadline)과 STORY_WAIT_MIN 안에서만. 키마다 편당 요청 STORY_BUDGET번까지."""
     if briefing and briefing.get("session") == "closed":
         raise Skip("휴장")
     if not items:
@@ -1755,7 +1430,13 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
     config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = m, "off"
     keys, main_key = story_keys(), config.GEMINI_API_KEY
     started, rewrites = time.monotonic(), 0
+
+    def late(extra=0):
+        return deadline is not None and datetime.now(config.KST) + timedelta(seconds=extra) > deadline
     while True:
+        if late():
+            config.GEMINI_API_KEY = main_key
+            raise Skip("마감 넘김")
         try:
             raw = story_call(prompt, f"이어 쓰는 글 {m}", keys, log)
             out = story_ok(story_out(raw, ctx))
@@ -1797,9 +1478,11 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
             break
         except llm.LLMError as e:   # 두 키 모두 안 됨 (한도 · 혼잡) → 쉬었다가 다시. 건너뛰지 않고 기다린다
             waited = (time.monotonic() - started) / 60
-            if waited + STORY_PAUSE_SEC / 60 > STORY_WAIT_MIN:
+            if isinstance(e, OutOfBudget) or waited + STORY_PAUSE_SEC / 60 > STORY_WAIT_MIN or late(STORY_PAUSE_SEC):
                 config.GEMINI_API_KEY = main_key
-                log(f"  {m}: {waited:.0f}분 기다렸지만 호출이 안 됨 ({e}) → 그 편 건너뜀")
+                why = ("요청 상한" if isinstance(e, OutOfBudget) else "마감 전에 다시 할 시간 없음" if late(STORY_PAUSE_SEC)
+                       else f"{waited:.0f}분 기다림")
+                log(f"  {m}: 호출이 안 됨 ({e}) · {why} → 그 편 건너뜀")
                 raise Skip("호출 실패") from e
             log(f"  {m}: 모든 키로 호출 실패 ({e}) → {STORY_PAUSE_SEC // 60}분 쉬고 다시 (지금까지 {waited:.0f}분)")
             time.sleep(STORY_PAUSE_SEC)
@@ -1811,6 +1494,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                 config.GEMINI_API_KEY = main_key
                 raise Skip("틀 어긋남") from e
     config.GEMINI_API_KEY = main_key
+    log("요청 수: " + " · ".join(f"{k['name']} {k['used']}번" for k in keys) + f" (키마다 상한 {STORY_BUDGET})")
     # 같은 지표 두 값 · 이름 두 표기 (14절 2번 · 7번)
     paras = [{"body": out["overview"]}, {"body": out["market"]}, *out["drivers"]]
     _, paras = resolve_conflicts([], paras, ctx, log, protect=False)
@@ -1819,23 +1503,23 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
              *(x for d in out["drivers"] for x in (d["heading"], d["body"]))]
     reps = unify_names(texts, log)
 
-    def fix(t):
+    def fix(t):   # 이름 한 표기 · 부호 없는 등락 ('−1.82%' → '1.82% 하락', 11-19 블로그)
         for x, y in reps.items():
             t = t.replace(x, y)
-        return t
+        return unsign(t)
     text = fix(" ".join(texts + out["first"]))
     tickers = [t for t in dict.fromkeys(x.strip().upper() for x in out["tickers"])
                if t in ctx.tickers and mentioned(t, ctx.tickers[t], text)]
     sources = list(dict.fromkeys(items[n - 1]["id"] for n in out["sources"] if 1 <= n <= len(items)))
-    dt = datetime.strptime(day, "%Y-%m-%d")
+    banner = banner_out(out["banner"], log)
     return {
         "date": day, "slot": slot, "reason": "", "format": "story", "briefing": f"{day}-{slot}" if briefing else None,
         "center": {"category": ctx.center["category"], "label": ctx.center["label"],
                    "channels": ctx.center["channels"]} if ctx.center else None,
-        "title": f"{dt.month}.{dt.day:02d} 시황 — {fix(out['title'])}",
+        "title": undash(fix(out["title"])),   # 19절 Q22: 그날 주제만. 날짜 · 편 이름은 블로그가 붙인다
         "summary": fix(out["summary"]),
         "overview": fix(out["overview"]),
-        "indexLine": ctx.index_line,
+        "indexLine": ctx.index_line,   # 묶음 숫자, 부호 없이 '1.12% 하락' (index_line)
         "market": fix(out["market"]),
         "shape": ctx.shape["mode"],
         "drivers": [{"heading": fix(d["heading"]), "body": fix(d["body"]),
@@ -1843,42 +1527,36 @@ def story_compose(day, slot, items, briefing, model=None, log=print):
                     for d in out["drivers"]],
         "sectors": out["sectors"],
         "pointsTitle": points_title(day, slot),
-        "points": out["first"] + [fix(x) for x in out["checks"]],
+        "points": [fix(x) for x in out["first"] + out["checks"]],
         "oneLine": fix(out["one_line"]),
-        "tickers": tickers, "sources": sources, "model": (m if m.startswith("nvidia:") else f"gemini:{m}") + (" (예비 키)" if keys[0][0] == "예비 키" else ""),
+        "banner": banner,
+        "tickers": tickers, "sources": sources, "model": (m if m.startswith("nvidia:") else f"gemini:{m}") + (" (예비 키)" if keys[0]["name"] == "예비 키" else ""),
+        "calls": {k["name"]: k["used"] for k in keys},
     }
 
 
 def story_markdown(doc):
-    out = [f"# {doc['title']}", "", f"_{doc['summary']}_", "", "## 한눈에 보기", "", doc["overview"], "",
-           "## 지수 · 업종 흐름", ""]
+    """시험 결과로 보는 글 (블로그 화면 순서: 제목 줄 → 배너 → 머리글 → 본문)."""
+    dt = datetime.strptime(doc["date"], "%Y-%m-%d")
+    head = f"{dt.month}.{dt.day:02d} {'미국' if doc['slot'] == 'am' else '한국'} 증시시황"
+    b = doc.get("banner") or {}
+    out = [f"# {head} : {doc['title']}", "", f"_검색 설명: {doc['summary']}_", "",
+           "배너 제목 후보: " + (" | ".join(" / ".join(c) for c in b.get("titles") or []) or "(없음)"),
+           "배너 요약: " + (" · ".join(b.get("keys") or []) or "(없음)"), "",
+           "## 한눈에 보기", "", doc["overview"], "", "## 지수 · 업종 흐름", ""]
     if doc["indexLine"]:
         out += [f"- {doc['indexLine']}", ""]
     out += [doc["market"], "", "## 장을 움직인 변수", ""]
     for n, d in enumerate(doc["drivers"], 1):
         out += [f"**{n}. {d['heading']}**", "", d["body"], ""]
     if doc["sectors"]:
-        out += ["## 업종별로 볼 것", "", "| 업종 | 등락 | 다음 장에서 볼 것 |", "|---|---|---|"]
-        out += [f"| {x['name']} | {x['move']} | {x['check']} |" for x in doc["sectors"]]
+        out += ["## 업종별로 볼 것", "", "| 업종 | 등락 (chg_pct) | 다음 장에서 볼 것 |", "|---|---|---|"]
+        out += [f"| {x['name']} | {x['chg_pct']:+.2f} | {x['check']} |" for x in doc["sectors"]]
         out.append("")
     out += [f"## {doc['pointsTitle']}", ""] + [f"- {x}" for x in doc["points"]]
-    out += ["", f"**핵심 한 줄** — {doc['oneLine']}", "", f"종목: {' · '.join(doc['tickers'])}", f"모델: {doc['model']}"]
+    out += ["", f"**핵심 한 줄**: {doc['oneLine']}", "", f"종목: {' · '.join(doc['tickers'])}",
+            f"모델: {doc['model']} · 요청 수: {doc.get('calls')} · 글의 무게: {doc.get('shape')}"]
     return "\n".join(out)
-
-
-def story(day, slot, model=None, log=print, out=print):
-    """이어 쓰는 글 시험. columns에 저장하지 않고 글만 out으로 낸다 (main은 시험 결과에 담는다)."""
-    start, end = window(day, slot)
-    items = load_summaries(start, end)
-    briefing = load_briefing(day, slot, log)
-    log(f"이어 쓰는 글 시험 {day}-{slot}: 재료 영상 {len(items)}개, 묶음 {'있음' if briefing else '없음'}")
-    try:
-        doc = story_compose(day, slot, items, briefing, model, log)
-    except Skip as e:
-        log(f"건너뜀: {e.args[0]}")
-        return None
-    out(f"\n===== 이어 쓰는 글 =====\n{story_markdown(doc)}\n===== 끝 =====\n")
-    return doc
 
 
 def save(key, doc, log=print):
@@ -1902,7 +1580,8 @@ def exists(key):
     return store.init().collection("columns").document(key).get().exists
 
 
-def run(day, slot, status, force=False, dry=False, log=print, out=print):
+def run(day, slot, status, force=False, dry=False, log=print, out=print, model=None):
+    """한 편 쓰기. dry면 저장하지 않고 글을 out으로 (시험 결과). force · dry면 마감을 보지 않는다."""
     key = f"{day}-{slot}"
     start, end = window(day, slot)
     now = datetime.now(config.KST)
@@ -1910,25 +1589,29 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print):
     if not force and not dry and exists(key):
         log("이미 있음 → 끝 (다시 쓰려면 --force)")
         return None
-    doc = {"date": day, "slot": slot, "views": [], "missing": None, "points": [], "facts": [],
-           "title": "", "summary": "", "tickers": [], "sources": [], "counts": None, "briefing": None,
-           "pointsTitle": points_title(day, slot), "model": "", "center": None}
+    free = force or dry
+    doc = {"date": day, "slot": slot, "format": "story", "reason": "", "title": "", "summary": "", "overview": "",
+           "indexLine": "", "market": "", "drivers": [], "sectors": [], "pointsTitle": points_title(day, slot),
+           "points": [], "oneLine": "", "banner": {}, "tickers": [], "sources": [], "briefing": None,
+           "center": None, "model": ""}
     try:
-        if not force and now > end:
+        if not free and now > end:
             raise Skip("마감 넘김")
-        items = load_summaries(start, min(end, now) if not force else end)
-        log(f"재료 영상 {len(items)}개")
+        items = load_summaries(start, end if free else min(end, now))
         briefing = load_briefing(day, slot, log)
-        doc.update(compose(day, slot, items, briefing, log))
-        if not force and datetime.now(config.KST) > end:
-            raise Skip("마감 넘김", {k: doc[k] for k in ("counts", "briefing")})
+        log(f"재료 영상 {len(items)}개, 묶음 {'있음' if briefing else '없음'}")
+        doc["briefing"] = f"{day}-{slot}" if briefing else None
+        doc.update(story_compose(day, slot, items, briefing, model, log, deadline=None if free else end))
+        if not free and datetime.now(config.KST) > end:
+            raise Skip("마감 넘김")
         doc["status"] = status
     except Skip as e:
-        doc["status"], doc["reason"] = "skip", e.args[0]
-        if len(e.args) > 1:
-            doc.update(e.args[1])
-        doc.update(views=[], missing=None, points=[], facts=[], title="", summary="", tickers=[], sources=[])
+        log(f"건너뜀: {e.args[0]}")
+        doc.update(status="skip", reason=e.args[0], title="", summary="", overview="", market="", drivers=[],
+                   sectors=[], points=[], oneLine="", banner={}, tickers=[], sources=[])
     if dry:
+        if doc["status"] != "skip":
+            out(f"\n===== 시황 글 =====\n{story_markdown(doc)}\n===== 끝 =====\n")
         out(json.dumps(doc, ensure_ascii=False, indent=2, default=str))
         return doc
     save(key, doc, log)
@@ -1943,25 +1626,23 @@ def main():
                     help="다 쓴 글의 status. 기본은 환경 변수 COMMENTARY_STATUS, 없으면 draft-test")
     ap.add_argument("--force", action="store_true", help="마감 · 이미 있음 무시 (지난 편 다시 쓰기, rev 올림)")
     ap.add_argument("--dry", action="store_true", help="columns에 저장하지 않고 결과만 낸다 (Actions에서는 시험 결과에)")
-    ap.add_argument("--story", action="store_true", help="이어 쓰는 글 시험 (저장 안 함)")
-    ap.add_argument("--model", help="--story에서 먼저 써 볼 Gemini 모델")
+    ap.add_argument("--story", action="store_true", help="--dry와 같음 (11-17 시험 모드 이름, 워크플로 입력 호환)")
+    ap.add_argument("--model", help=f"쓸 모델 (기본 {STORY_MODEL}, NVIDIA는 nvidia:z-ai/glm-5.3)")
     a = ap.parse_args()
     now = datetime.now(config.KST)
     slot = a.slot if a.slot != "auto" else ("am" if now.hour < 12 else "pm")
     day = a.date or now.strftime("%Y-%m-%d")
     import os
     status = a.status or (os.environ.get("COMMENTARY_STATUS") or "draft-test")
-    if not a.story and status not in ("draft-test", "ready"):
+    if status not in ("draft-test", "ready"):
         sys.exit(f"COMMENTARY_STATUS 값이 이상함: {status}")
+    dry = a.dry or a.story
     # 저장소가 공개라 글 · 걸린 문장은 실행 로그에 찍지 않는다. 시험 결과(trials, 웹 설정 > 시험 결과)에 담는다 (11-18).
     # 집 PC에서는 전처럼 화면에도 찍힌다
-    kind = "이어 쓰는 글 시험" if a.story else "시험 (dry)" if a.dry else "쓰는 과정"
+    kind = "시험 (dry)" if dry else "쓰는 과정"
     rep = private.Report("commentary", f"시황 해설 {day}-{slot} {kind}")
     try:
-        if a.story:
-            story(day, slot, a.model, log=rep.log, out=rep.line)
-        else:
-            run(day, slot, status, force=a.force, dry=a.dry, log=rep.log, out=rep.line)
+        run(day, slot, status, force=a.force, dry=dry, log=rep.log, out=rep.line, model=a.model)
     finally:
         rep.save()
 
