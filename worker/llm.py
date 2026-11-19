@@ -162,14 +162,20 @@ class _Switch(Exception):
     """이 모델은 그만 쓰고 예비 모델로 넘어간다."""
 
 
-def generate_json(prompt, log=print, what=""):
+requests_made = 0   # 이 프로세스에서 보낸 요청 수 (재시도 포함). 시황 해설이 편당 호출 상한을 셀 때 쓴다
+
+
+def generate_json(prompt, log=print, what="", attempts=None, wait_429=True):
     """prompt → 파싱된 JSON. 실패하면 LLMError.
 
-    Gemini는 첫 모델이 404(모델 없음) · 429(하루 한도) · 5xx 두 번이면 예비 모델(GEMINI_TEXT_FALLBACK)로 넘어간다."""
+    Gemini는 첫 모델이 404(모델 없음) · 429(하루 한도) · 5xx 두 번이면 예비 모델(GEMINI_TEXT_FALLBACK)로 넘어간다.
+    attempts: 한 모델에 보낼 요청 수 상한 (기본 ATTEMPTS). wait_429=False면 429에 기다리지 않고 바로 LLMError
+    (부르는 쪽이 다른 키로 넘어갈 때)."""
     global _last_model
     if config.LLM_PROVIDER == "nvidia":
         _last_model = ""
-        data = _generate_with(lambda p: _call_nvidia(p, log=log), prompt, log, what, has_next=False)
+        data = _generate_with(lambda p: _call_nvidia(p, log=log), prompt, log, what, has_next=False,
+                              attempts=attempts, wait_429=wait_429)
         _last_model = f"nvidia:{config.NVIDIA_MODEL}"
         return data
     if not config.GEMINI_API_KEY:
@@ -178,7 +184,8 @@ def generate_json(prompt, log=print, what=""):
     for i, model in enumerate(models):
         has_next = i + 1 < len(models)
         try:
-            data = _generate_with(lambda p, m=model: _call_gemini(p, m), prompt, log, what, has_next)
+            data = _generate_with(lambda p, m=model: _call_gemini(p, m), prompt, log, what, has_next,
+                                  attempts=attempts, wait_429=wait_429)
         except _Switch as e:
             log(f"{model} 실패 ({e}) → 예비 모델 {models[i + 1]}로 다시 ({what})")
             continue
@@ -187,19 +194,24 @@ def generate_json(prompt, log=print, what=""):
     raise LLMError("모든 모델 실패")  # _Switch는 다음 모델이 있을 때만 나므로 여기 오지 않는다
 
 
-def _generate_with(call, prompt, log, what, has_next):
+def _generate_with(call, prompt, log, what, has_next, attempts=None, wait_429=True):
     """한 모델로 재시도하며 JSON을 받는다. has_next면 404 · 429 · 5xx 두 번째에 _Switch."""
+    global requests_made
     last = None
     timeouts = 0
-    for attempt in range(1, ATTEMPTS + 1):
+    limit = attempts or ATTEMPTS
+    for attempt in range(1, limit + 1):
         _wait_turn()
+        requests_made += 1
         try:
             return _extract_json(call(prompt))
         except _Retry as e:
             last = e
             if has_next and (e.code in (404, 429) or (e.code in (500, 502, 503, 504) and attempt >= 2)):
                 raise _Switch(reasons.explain(e)) from e
-            if attempt == ATTEMPTS:
+            if e.code == 429 and not wait_429:
+                raise LLMError(reasons.explain(e)) from e
+            if attempt == limit:
                 break
             if e.code == 429:
                 log(f"{config.LLM_PROVIDER} 요청 한도, 60초 기다립니다 ({what} {attempt}/{ATTEMPTS})")

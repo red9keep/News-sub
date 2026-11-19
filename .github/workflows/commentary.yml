@@ -2,6 +2,7 @@ name: commentary
 
 # 알파스코프 시황 해설 (worker/commentary.py, News-doc 요청-알파스코프-시황-해설.md)
 # 11-16 사용자 결정: 품질을 확인할 때까지 자동 실행 멈춤. 지금은 손으로만 돌린다 (dry로 시험 글 보기).
+# 11-19: 글은 '이어 쓰는 시황 기사' 한 틀(format story, 요청 문서 17 ~ 22절). 옛 틀(facts · views)은 없앰
 # 저장소가 공개라 글 · 걸린 문장은 실행 로그에 찍지 않는다 (11-18). 글과 쓰는 과정은 비공개 Firestore trials에 남고 웹(설정 > 시험 결과)에서 본다
 # 다시 켤 때: ① cron-trigger/src/index.js COMMENTARY에 08:10 am · 20:30 pm 되살리고 wrangler deploy
 #             ② 아래 schedule 예비 cron 되살림 ("14 23 * * *" = 08:14 KST am, "33 11 * * *" = 20:33 KST pm)
@@ -28,11 +29,11 @@ on:
         type: boolean
         default: false
       story:
-        description: "이어 쓰는 글 시험 (columns에 저장 안 함, 글은 웹 설정 > 시험 결과, 11-17)"
+        description: "dry와 같음 (11-17 이름. columns에 저장 안 함, 글은 웹 설정 > 시험 결과)"
         type: boolean
         default: false
       model:
-        description: "story에서 쓸 모델 (비우면 gemini-4-hydrogen, NVIDIA는 nvidia:z-ai/glm-5.3)"
+        description: "쓸 모델 (비우면 gemini-4-hydrogen, NVIDIA는 nvidia:z-ai/glm-5.3)"
         type: string
         default: ""
       scheduled:
@@ -50,7 +51,7 @@ permissions:
 jobs:
   write:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60   # 이어 쓰는 글은 호출이 안 되면 30분까지 기다린다
+    timeout-minutes: 60   # 호출이 안 되면 30분까지 기다린다 (예약 실행은 마감 08:30 · 20:40 안에서만)
     steps:
       - uses: actions/checkout@v4
 
