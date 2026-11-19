@@ -1112,7 +1112,8 @@ def story_out(raw, ctx):
     if not ctx.shape["table"]:
         out["sectors"] = []
     must = [c for c in ctx.candidates if c["must"]]
-    first = [f"{c['time']} — {c['what']}" if c.get("time") and c.get("what") else c["text"] for c in must]
+    # 장 시작 줄은 시각 없이 묶음 글만 (11-19 블로그 목업 · 사용자 결정: 화면에 09:00 · 10:00을 쓰지 않음)
+    first = [c.get("what") or c["text"] for c in must]
     checks = []
     for x in (plain(_clean(x)).rstrip(".") for x in raw.get("checks") or []):
         if x and "첫 반응" not in x and not any(SequenceMatcher(None, x, f).ratio() >= 0.5 for f in first + checks):
