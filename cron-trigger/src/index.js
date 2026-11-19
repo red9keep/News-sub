@@ -26,10 +26,12 @@ const SLOTS = [
 
 // 시황 해설 (commentary.yml, 11-16). 유튜브에 접속하지 않으므로 시각을 흩지 않고 정시에 건다.
 //   am 08:10 (마감 08:30, 당잠사 07:35 회차 요약 뒤) · pm 20:30 (마감 20:40)
-// 11-16 사용자 결정: 품질을 확인할 때까지 멈춤 (빈 표). 다시 켤 때 아래 두 줄을 되살리고 commentary.yml schedule도 같이
-//   { at: 8 * 60 + 10, slot: "am" },
-//   { at: 20 * 60 + 30, slot: "pm" },
-const COMMENTARY = [];
+// 11-16 멈춤 → 11-19 사용자 결정으로 다시 켬 (새 틀 format story, status는 COMMENTARY_STATUS 비움 = draft-test).
+// 멈출 때는 빈 표로 두고 commentary.yml schedule도 같이 지운다
+const COMMENTARY = [
+  { at: 8 * 60 + 10, slot: "am" },
+  { at: 20 * 60 + 30, slot: "pm" },
+];
 
 // 문자열 → [0, 1) 고른 값 (FNV-1a + 섞기). 같은 문자열이면 늘 같은 값
 function rand(key) {
