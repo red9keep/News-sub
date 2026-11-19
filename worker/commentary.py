@@ -856,23 +856,26 @@ STORY_PROMPT = """당신은 주식 투자 블로그 '알파스코프'의 시황 
 이 글이 다루는 장: {label}
 오늘의 중심 사건: {center}
 
-독자는 이 글 하나로 '장이 왜 그렇게 움직였고, 다음 장에서 무엇을 봐야 하는지'를 알고 싶어 합니다.
-발언 모음이 아니라 한 편의 시황 기사로 씁니다. 먼저 아래 '변수 후보'에서 변수를 고르고, 그 변수들이 어떻게 이어지는지 정한 뒤 씁니다.
+독자는 이 글 하나로 '장이 왜 그렇게 움직였고, 그래서 다음 장에서 무엇을 봐야 하는지'를 알고 싶어 합니다.
+숫자 확인은 블로그의 지수 칸 · 업종 표가 맡습니다. 이 글은 사실을 줄 세운 기사 모음도, 글머리표 나열도 아닙니다.
+짧게 쓰되 문장과 문장이 원인 → 결과 → 남은 것으로 이어지는 전문가 시황입니다.
+먼저 아래 '변수 후보'에서 변수를 고르고, 그 변수들이 어떻게 이어지는지 정한 뒤 씁니다.
+
+길이: overview · drivers 본문 · takeaway를 모두 합쳐 800~1,000자 (공백 포함, 강조 표시 빼고). 넘치면 문장을 줄인다.
 
 JSON 객체 하나로만 답합니다:
 {{
   "title": "그날 주제 (30자 안팎). 무슨 일로 장이 어떻게 됐는지. 날짜 · '시황' 같은 앞머리와 줄표(—)는 쓰지 않는다 (블로그가 붙임). 예: '앤트로픽 IPO와 엔비디아 악재에 기술주 급락, 나스닥 2.47% 하락'",
   "summary": "검색 설명용 한 문장, 45자 안",
-  "overview": "한눈에 보기. {overview_len} 한 문단. 지수가 어떻게 끝났고, 무엇이 장을 움직였고, 그 흐름이 다음 장에 어떻게 이어지는지",
-  "market": "지수 · 업종 흐름. 3~4문장 한 문단. {market_rule}",
+  "overview": "한눈에 보기. 3문장 한 문단, 이어지게: ① 무슨 일이 일어났나 ② 왜 (원인 한두 가지를 인과로) ③ 그래서 다음 장에 무엇이 남았나. 지수 종가 · 등락 숫자는 쓰지 않는다 (화면에 지수 칸이 따로 있다). 제목 문장을 되풀이하지 않고, 제목이 말하지 않은 앞뒤(며칠째였나 · 무엇이 돌려세웠나)를 쓴다. 강조 표시를 넣는다 (아래 강조 규칙)",
   "drivers": [
     {{"cand": 변수 후보 번호 (숫자),
       "heading": "변수 이름 (15자 안. 예: '실적 발표를 앞둔 경계')",
-      "body": "한 문단 (길이는 아래 drivers 규칙). 무슨 일이 있었나 → 왜 시장에 중요한가 → 이 변수를 낙관하는 쪽과 걱정하는 쪽이 각각 무엇을 근거로 드는가(말한 사람을 붙여서. 한쪽만 있으면 한쪽만) → 마지막 문장은 전망이 아니라 사실로 끝낸다: 이 변수와 바로 이어지는 일정이 일정 표나 재료에 있으면 그것을, 없으면 지금 상태를 쓴다. 관계가 먼 일정을 억지로 붙이지 않는다"}}
+      "body": "한 문단 3문장 (많아도 4): ① 무슨 일 (핵심 숫자 하나) ② 그것이 시장에 왜 중요했나, 앞 문장 · 앞 변수와 이어서 ('그러자' · '여기에' · '다만') ③ 엇갈리는 시각 또는 남은 것. 인용은 가장 맞서는 한 쌍까지 (말한 사람을 붙여서). 둘째 변수의 첫 문장은 첫째 변수와의 관계로 시작한다 (예: '반도체가 지수를 끌어올린 날, 오름폭을 넓힌 것은 …'). 강조 표시를 넣는다 (아래 강조 규칙)"}}
   ],
+  "takeaway": "그날 업종 · 종목 흐름의 뜻 한 문장 ('-습니다'체). 숫자 없이, 앞 글 없이도 혼자 읽히게: '이는 · 이 같은 · 이처럼 · 이러한 · 결국'으로 시작하지 않고, '…음을 보여줍니다' 대신 그 일 자체를 쓴다 (예: '기술주와 일부 대형주에만 매수세가 몰렸고, 헬스케어와 소재로는 번지지 않았습니다.'). 강조 표시는 넣지 않는다",
   "sectors": [{{"name": "업종 이름 (블로그 데이터 close.sectors에 적힌 그대로)", "check": "다음 장에서 볼 것 한 구절 (20자 안)"}}],
   "checks": ["다음 장에서 확인할 것 1~2줄. 아래 후보와 일정 표에서 고른다. 각 줄은 '무엇 — 왜 보는지'를 명사로 끝나는 한 구절로 (예: '엔비디아 실적 — 데이터센터 매출이 예상을 넘는지'). 40자 안"],
-  "one_line": "오늘의 핵심 한 줄. 권유나 예측이 아니라 오늘 장에서 일어난 일의 핵심을 사실 한 문장으로 ('-습니다'체). '…상태입니다 · …보여줍니다'로 끝내지 않는다",
   "banner": {{"titles": [["첫 줄", "둘째 줄"], ["첫 줄", "둘째 줄"]], "keys": ["무엇 + 방향 낱말", "…"]}},
   "tickers": ["본문에 이름이 나온 종목의 티커 (재료에 적힌 그대로)"],
   "sources": [근거로 쓴 영상 번호 (숫자)]
@@ -881,6 +884,13 @@ JSON 객체 하나로만 답합니다:
 drivers: 변수는 아래 '변수 후보'에서만 고르고 후보 번호를 cand에 적는다. 번호가 앞선 후보부터 쓰고, 1번 후보는 꼭 다룬다.
 한 후보에 여러 주제가 묶여 있으면 그 가운데 장과 가장 가까운 이야기를 중심으로 쓴다. 변수끼리 내용이 겹치지 않게 한다.
 {drivers_rule}
+강조 표시 (overview · drivers[].body에만. 다른 칸에는 넣지 않는다):
+- **말** = 결과 · 핵심 사실: 그날 일어난 일 자체 (지수 · 종목의 결정적 움직임, 실적 숫자, 발표된 결정 · 합의). 문단마다 1곳.
+- ==말== = 원인 · 변수 · 해석: 시장이 왜 그렇게 반응했나, 엇갈리는 시각의 핵심 주장, 남은 위험. 문단마다 1~2곳.
+- 나머지(잇는 말 · 배경 · 날짜 · 말한 사람 · 소속 · 출처)는 표시하지 않는다.
+- 감싸는 것은 5~25자 안팎의 짧은 말 덩어리. 문장 전체 · 사람 이름만 · 소속 괄호 · 숫자 하나만 · 꾸밈말은 감싸지 않는다.
+- 표시 안에 다른 표시를 넣지 않는다. 마침표는 표시 밖에 둔다.
+- 예: 나흘 연속 내리며 5,000선을 내줬던 코스피가 **엔비디아 호실적에 힘입어 하루 만에 5,000선을 되찾았습니다**. ==AI 수요가 꺾이지 않았다는 확인==이 삼성전자와 SK하이닉스로 매수세를 불러왔고, ==한중 FTA 후속 협상 타결== 소식이 오름폭을 키웠습니다.
 sectors: {sectors_rule}
 checks: {checks_rule}
 banner (글 맨 위 그림에 얹는 짧은 글자. 그날 주제(title)를 짧게 줄인 말이고 새 주장을 넣지 않는다):
@@ -921,7 +931,9 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
   숫자를 빼면 알맹이가 없어지는 문장('외국인이 물량을 내놓으며 수급을 흔들었습니다')은 문장째 빼고 앞뒤 문장을 잇는다
 - 소속 · 직함이 재료와 다름: 재료에 적힌 소속 · 직함으로 고치거나 괄호 · 직함을 뺀다
 - 이름 한 토막: 재료에 성까지 있으면 '이름 성(소속 직함)'으로, 없으면 이름을 빼고 '소속 직함'으로 쓴다 ('BNP 파리바 전략가는')
-- 핵심 한 줄에 비위 · 사고 낱말: 그 낱말 없이 장에서 일어난 일로 다시 쓴다
+- takeaway가 혼자 읽히지 않음: '이는 · 이 같은 · 이처럼 · 이러한 · 결국'을 빼고, '…음을 보여줍니다' 대신 그 일 자체를 쓴다. 숫자는 뺀다
+- 문단이 김: 그 문단만 3문장(많아도 4)으로 줄인다. 강조 표시(**말** · ==말==)는 남긴다
+- 강조 표시(**말** · ==말==)는 고친 문장에도 그대로 둔다. 걸린 점은 표시를 뗀 글을 보고 판단한 것이다
 - 재료에 없는 이름 · 말한 곳: 재료에 적힌 이름 · 채널로 고친다. 재료에서 찾을 수 없으면 그 문장을 빼고 앞뒤를 잇는다
 - 권하는 말투: 명사로 끝나는 구절이나 사실 문장으로 고친다
 - 상투어: 같은 뜻의 쉬운 말로 풀어 쓴다
@@ -949,7 +961,49 @@ def plain(t):
 
 
 POLITE_END = re.compile(r"니다[.。]?$")
-STORY_PARAS = ("overview", "market", "one_line")
+STORY_PARAS = ("overview", "takeaway")   # 28절: market · one_line은 쓰지 않음 (블로그가 표를 그림 · 제목과 같은 말)
+
+# ---------- 28절 강조 표시: **결과** (검정 굵게) · ==원인 · 해석== (보라). overview · drivers[].body에만 ----------
+MARK = re.compile(r"\*\*(.+?)\*\*|==(.+?)==")
+MARK_MIN, MARK_MAX = 3, 40   # 감싼 말 길이 (블로그 기준 5 ~ 25자, 넘거나 모자라도 그 표시만 뗀다)
+MARK_PER_PARA = {"**": 1, "==": 2}
+STORY_LEN = (800, 1000)       # overview + drivers 본문 + takeaway, 표시 뗀 글 (공백 포함)
+TAKEAWAY_LEAD = re.compile(r"^(이는|이 같은|이같은|이처럼|이러한|이런|결국|이에|이로써)\s*")
+SHOWS_END = re.compile(r"(음을|ㅁ을|것을|을|를)?\s*(보여줍니다|보여 줍니다|시사합니다|방증합니다|의미합니다|드러냅니다)[.。]?$")
+
+
+def unmark(t):
+    """강조 표시를 뗀 글 (검사 · 길이 · 다른 칸)."""
+    return re.sub(r"\*\*|==", "", t or "")
+
+
+def marks_clean(t, where="", log=None):
+    """강조 표시 규칙을 파이썬이 마지막에 맞춘다. 어긋난 표시는 떼고 글자는 남긴다 (고쳐 쓰기 호출 없음).
+    짝이 안 맞음 · 겹침 · 문장 전체 · 너무 짧거나 김 · 문단마다 개수 넘음."""
+    t = t or ""
+    if t.count("**") % 2 or t.count("==") % 2:
+        if log:
+            log(f"  강조 표시 짝이 안 맞음 → 모두 뗌 ({where})")
+        return unmark(t)
+    used = {"**": 0, "==": 0}
+    dropped = []
+
+    def one(m):
+        mark = "**" if m.group(1) is not None else "=="
+        inner = m.group(1) if m.group(1) is not None else m.group(2)
+        bare = unmark(inner).strip()
+        whole = len(sentences(unmark(t))) and any(bare.rstrip(".") == s.rstrip(".") for s in sentences(unmark(t)))
+        bad = ("**" in inner or "==" in inner or whole or not (MARK_MIN <= len(bare) <= MARK_MAX)
+               or used[mark] >= MARK_PER_PARA[mark] or re.fullmatch(r"[+\-−–]?[\d.,]+\s*(%p|%|배|원|달러)?", bare))
+        if bad:
+            dropped.append(bare)
+            return unmark(inner)
+        used[mark] += 1
+        return f"{mark}{inner}{mark}"
+    out = MARK.sub(one, t)
+    if dropped and log:
+        log(f"  강조 표시 뗌 ({where}):", " · ".join(dropped))
+    return out
 
 
 # 변수 후보 순위 · 그날 글의 무게 (11-17 사용자: 무엇이 중요한지는 AI가 아니라 파이썬이 먼저 정한다)
@@ -1064,18 +1118,18 @@ def day_shape(briefing, cands, log=None):
     lead = cands[0]["score"] / cands[1]["score"] if len(cands) > 1 and cands[1]["score"] else (9 if cands else 0)
     if lead >= 1.6 and (big is None or big >= 1):
         mode = "focus"
-        rule = ("오늘은 후보 1번이 다른 후보를 크게 앞선 날이다. drivers 첫 문단은 후보 1번을 6~8문장으로 깊게 쓴다 "
-                "(배경 → 무슨 일 → 왜 중요한가 → 양쪽 시각 → 다음에 확인될 사실). 꼭 필요하면 다른 후보 하나를 3~4문장으로 덧붙인다. drivers는 1~2개.")
-        lo, hi, ov = 1, 2, "3~4문장"
+        rule = ("오늘은 후보 1번이 다른 후보를 크게 앞선 날이다. drivers 첫 문단은 후보 1번을 4문장으로 쓴다. "
+                "꼭 필요하면 다른 후보 하나를 3문장으로 덧붙인다. drivers는 1~2개.")
+        lo, hi, ov = 1, 2, "3문장"
     elif big is not None and big < 0.4 and spread < 1.5:
         mode = "quiet"
         rule = ("오늘은 지수 · 업종이 거의 움직이지 않은 조용한 날이다. 억지로 큰 사건처럼 쓰지 않는다. "
-                "drivers는 1~2개, 문단마다 3~4문장으로 짧게 쓴다.")
-        lo, hi, ov = 1, 2, "2~3문장"
+                "drivers는 1~2개, 문단마다 3문장으로 짧게 쓴다.")
+        lo, hi, ov = 1, 2, "3문장"
     else:
         mode = "normal"
-        rule = "drivers는 2~3개, 문단마다 4~6문장. 점수 차이가 큰 후보를 억지로 채우지 않는다 (2개면 충분하면 2개)."
-        lo, hi, ov = 2, 3, "3~4문장"
+        rule = "drivers는 2개 (많아도 3개), 문단마다 3문장 (많아도 4). 점수 차이가 큰 후보를 억지로 채우지 않는다."
+        lo, hi, ov = 2, 3, "3문장"
     table = spread >= 2.0
     if log:
         log(f"글의 무게: {mode} (지수 최대 {big if big is not None else '모름'}% · 업종 차이 {spread:.2f}%p · "
@@ -1089,8 +1143,13 @@ def story_out(raw, ctx):
     if not isinstance(raw, dict):
         raise ValueError("JSON 객체 아님")
     out = {k: plain(_clean(raw.get(k))) for k in ("title", "summary", *STORY_PARAS)}
+    # 28절: 강조 표시는 overview · drivers 본문에만. 다른 칸은 뗀다. market · one_line은 쓰지 않는다
+    for k in ("title", "summary", "takeaway"):
+        out[k] = unmark(out[k])
+    out["takeaway"] = (sentences(out["takeaway"]) or [""])[0]   # 한 문장
+    out["market"] = out["one_line"] = ""
     out["title"] = undash(re.sub(r"^\d{1,2}\.\d{1,2}\s*(시황(\s*해설)?)?\s*[—–-]\s*", "", out["title"]))   # 19절 Q22: 주제만
-    ds = [{"heading": undash(plain(_clean(d.get("heading")))), "body": plain(_clean(d.get("body"))),
+    ds = [{"heading": undash(unmark(plain(_clean(d.get("heading"))))), "body": plain(_clean(d.get("body"))),
            "cand": (_ints([d.get("cand")]) or [0])[0]}
           for d in raw.get("drivers") or [] if isinstance(d, dict) and _clean(d.get("body"))]
     n = len(ctx.driver_cands)
@@ -1107,7 +1166,7 @@ def story_out(raw, ctx):
     moves = {x.get("name"): x.get("chg_pct") for x in ((ctx.briefing or {}).get("close") or {}).get("sectors") or []
              if _pct(x.get("chg_pct"))}
     out["sectors"] = [{"name": _clean(x.get("name")), "chg_pct": float(moves[_clean(x.get("name"))]),
-                       "check": plain(_clean(x.get("check")))}
+                       "check": unmark(plain(_clean(x.get("check"))))}
                       for x in raw.get("sectors") or [] if isinstance(x, dict) and _clean(x.get("name")) in moves][:5]
     if not ctx.shape["table"]:
         out["sectors"] = []
@@ -1115,7 +1174,7 @@ def story_out(raw, ctx):
     # 장 시작 줄은 시각 없이 묶음 글만 (11-19 블로그 목업 · 사용자 결정: 화면에 09:00 · 10:00을 쓰지 않음)
     first = [c.get("what") or c["text"] for c in must]
     checks = []
-    for x in (plain(_clean(x)).rstrip(".") for x in raw.get("checks") or []):
+    for x in (unmark(plain(_clean(x))).rstrip(".") for x in raw.get("checks") or []):
         if x and "첫 반응" not in x and not any(SequenceMatcher(None, x, f).ratio() >= 0.5 for f in first + checks):
             checks.append(x)
     out["first"], out["checks"] = first, checks[:2]
@@ -1174,9 +1233,9 @@ def banner_out(raw, log=print):
 
 
 def story_ok(out):
-    if not out["title"] or len(sentences(out["overview"])) < 2 or not out["one_line"]:
-        raise ValueError("제목 · 한눈에 보기 · 핵심 한 줄이 모자람")
-    out["drivers"] = [d for d in out["drivers"] if d["heading"] and len(sentences(d["body"])) >= 3]
+    if not out["title"] or len(sentences(out["overview"])) < 2:
+        raise ValueError("제목 · 한눈에 보기가 모자람")
+    out["drivers"] = [d for d in out["drivers"] if d["heading"] and len(sentences(d["body"])) >= 2]
     if len(out["drivers"]) < out.get("min_drivers", 2):
         raise ValueError(f"변수 문단이 {out.get('min_drivers', 2)}개가 안 됨")
     return out
@@ -1332,13 +1391,14 @@ def story_replace(out, old, new):
 def story_problems(out, ctx):
     """[(문장, 제목인가, [걸린 점])]. 제목 · 소제목은 title 규칙으로 본다."""
     units = [(out["title"], True)] + [(d["heading"], True) for d in out["drivers"]] + [(out["summary"], False)]
-    one = out["one_line"]   # 18절 Q19: 핵심 한 줄도 제목 칸처럼 비위 낱말을 넣지 않는다
+    one = out["takeaway"]   # 18절 Q19: 핵심 한 줄(28절부터 takeaway)도 제목 칸처럼 비위 낱말을 넣지 않는다
     units += [(x, False) for k in STORY_PARAS for x in sentences(out[k])]
     units += [(x, False) for d in out["drivers"] for x in sentences(d["body"])]
     prose = {x for x, title in units if not title}   # 문장으로 쓰는 칸만 '-습니다'체를 본다 (관전 포인트 · 표는 구절)
     units += [(x, False) for x in out["checks"]] + [(x["check"], False) for x in out["sectors"]]
     found = []
     for s, title in units:
+        mark, s = s, unmark(s)   # 28절: 검사는 강조 표시를 뗀 글로. 걸린 문장은 원래(표시 있는) 글로 돌려준다
         p = sentence_problems(s, ctx, title, STORY_FORBIDDEN)
         if not any(x.startswith("재료에 없는 숫자") for x in p):
             x = raw_number_problem(s, ctx)
@@ -1346,21 +1406,40 @@ def story_problems(out, ctx):
                 p.append(f"원본(자막)에서 확인되지 않는 숫자 {x} (요약에만 있음)")
         if s == one and ALLEGATION.search(s):
             p.append(f"핵심 한 줄에 '{ALLEGATION.search(s).group()}' 같은 말을 넣지 않는다")
-        if s in prose and not POLITE_END.search(s.strip()):
+        if s == one and (TAKEAWAY_LEAD.search(s) or SHOWS_END.search(s.strip())):
+            p.append("takeaway가 혼자 읽히지 않음 ('이는 · 이처럼'으로 시작하거나 '…보여줍니다'로 끝남)")
+        if s == one and re.search(r"\d", s):
+            p.append(f"{SOFT}takeaway에 숫자를 넣지 않는다")
+        if mark in prose and not POLITE_END.search(s.strip()):
             p.append("'-습니다'체가 아님 ('내렸다'를 '내렸습니다'로)")
         if not title and ADVICE_END.search(s.strip()):
             p.append("독자에게 권하는 말투 ('…해야 한다')")
-        if s in prose:
+        if mark in prose:
             sp, strip = speaker_problems(s, ctx)
             p += sp
             for a, b in strip.items():
-                ctx.strips.setdefault(s, {})[a] = b
+                ctx.strips.setdefault(mark, {})[a] = b
         m = CLICHE.search(s)
         if m and not p:
             p.append(f"{SOFT}상투어 '{m.group()}'를 쉬운 말로")
 
         if p:
-            found.append((s, title, p))
+            found.append((mark, title, p))
+    return found + length_problems(out)
+
+
+def length_problems(out):
+    """28절 길이: 한눈에 보기 3문장 · 변수 3문장(많아도 4) · 다 합쳐 800 ~ 1,000자. 넘친 문단만 고쳐 쓰게 (빼지는 않음 → SOFT)."""
+    paras = [("overview", out["overview"], 4)] + [(f"변수 '{d['heading']}'", d["body"], 4) for d in out["drivers"]]
+    total = sum(len(unmark(t)) for _, t, _ in paras) + len(out["takeaway"])
+    found = []
+    for name, t, most in paras:
+        n = len(sentences(t))
+        if n > most:
+            found.append((t, False, [f"{SOFT}문단이 김: {name} {n}문장 → 3문장으로"]))
+    if total > STORY_LEN[1] + 100 and not found:   # 문장 수는 맞는데 긴 경우: 가장 긴 문단 하나만
+        name, t, _ = max(paras, key=lambda x: len(unmark(x[1])))
+        found.append((t, False, [f"{SOFT}글 전체 {total}자 (800~1,000자) → {name} 문단을 줄인다"]))
     return found
 
 
@@ -1383,7 +1462,7 @@ def story_drop(out, found):
     out["checks"] = [x for x in out["checks"] if x not in bad]
     out["sectors"] = [x for x in out["sectors"] if x["check"] not in bad]
     if out["summary"] in bad:
-        out["summary"] = sentences(out["overview"])[0] if out["overview"] else ""
+        out["summary"] = unmark(sentences(out["overview"])[0]) if out["overview"] else ""
     return out
 
 
@@ -1407,9 +1486,6 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
                     "오늘은 업종 사이 차이가 작아 표를 넣지 않는다. 빈 배열.")
     cands = "\n".join(f"- {c['text']}" for c in ctx.candidates if not c["must"]) or "(없음)"
     has_first = any(c["must"] for c in ctx.candidates)
-    market_rule = ("지수 등락 한 줄은 이미 따로 있으니 지수 숫자는 다시 쓰지 않는다. 블로그 데이터의 업종 · 종목 등락 숫자를 넣어 "
-                   "어디가 많이 움직였고 어디가 버텼는지, 그 차이가 무엇을 말하는지" if ctx.index_line else
-                   "방송에 나온 지수 · 수급 · 업종 숫자로 어디가 많이 움직였고 어디가 버텼는지")
     checks_rule = ("장 시작 줄(지난밤 장 뒤 첫 반응)은 따로 들어가니 쓰지 않는다. " if has_first else "") + \
         "다음 장과 이어지지 않는 일정은 고르지 않는다. 고를 것이 없으면 빈 배열."
     done = [e["name"] for e in ctx.schedule if e.get("done") and e.get("kind") == "EARNINGS"]
@@ -1417,12 +1493,12 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
     if done:   # 11-18 시험: 장 마감 뒤 나온 엔비디아 실적이 글 끝에 묻힘
         names = " · ".join(done)
         drivers_rule += (f" 일정 표에서 '이미 발표됨'인 {names}은 지수 마감 뒤에 나와 지수 흐름에는 반영되지 않았지만 다음 장의 큰 재료다."
-                         " 재료에 그 결과가 있으면 overview 둘째 문장에서 결과(재료에 적힌 숫자 · 표현만)와 시간 외 주가 반응(재료에 있을 때만)을 쓰고,"
+                         " 재료에 그 결과가 있으면 overview 첫 문장이나 둘째 문장에서 결과(재료에 적힌 숫자 · 표현만)와 시간 외 주가 반응(재료에 있을 때만)을 쓰고,"
                          " 그 회사와 이어지는 변수 문단도 그 결과로 시작한다. 재료에 결과가 없으면 '발표됐다'는 사실만 쓰고 결과를 짐작하지 않는다.")
         checks_rule += f" {names} 발표 뒤 첫 반응을 한 줄 넣는다 (예: '{done[0]} 뒤 반도체주 — 실적 결과가 주가로 이어지는지')."
     prompt = STORY_PROMPT.format(**common, label=ctx.label, points_title=points_title(day, slot), candidates=cands,
-                                 market_rule=market_rule, checks_rule=checks_rule, sectors_rule=sectors_rule,
-                                 drivers_rule=drivers_rule, overview_len=ctx.shape["overview"],
+                                 checks_rule=checks_rule, sectors_rule=sectors_rule,
+                                 drivers_rule=drivers_rule,
                                  driver_cands="\n".join(c["text"] for c in ctx.driver_cands) or "(없음 → 재료에서 직접 고른다, cand는 0)")
     import time
     m = model or STORY_MODEL
@@ -1496,11 +1572,13 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
                 raise Skip("틀 어긋남") from e
     config.GEMINI_API_KEY = main_key
     log("요청 수: " + " · ".join(f"{k['name']} {k['used']}번" for k in keys) + f" (키마다 상한 {STORY_BUDGET})")
+    size = len(unmark(out["overview"])) + sum(len(unmark(d["body"])) for d in out["drivers"]) + len(out["takeaway"])
+    log(f"글 길이 {size}자 (28절 {STORY_LEN[0]} ~ {STORY_LEN[1]}자) · 변수 {len(out['drivers'])}개 · takeaway {'있음' if out['takeaway'] else '없음'}")
     # 같은 지표 두 값 · 이름 두 표기 (14절 2번 · 7번)
     paras = [{"body": out["overview"]}, {"body": out["market"]}, *out["drivers"]]
     _, paras = resolve_conflicts([], paras, ctx, log, protect=False)
     out["overview"], out["market"] = paras[0]["body"], paras[1]["body"]
-    texts = [out["title"], out["summary"], out["overview"], out["market"], out["one_line"], *out["checks"],
+    texts = [out["title"], out["summary"], out["overview"], out["takeaway"], *out["checks"],
              *(x for d in out["drivers"] for x in (d["heading"], d["body"]))]
     reps = unify_names(texts, log)
 
@@ -1519,17 +1597,18 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
                    "channels": ctx.center["channels"]} if ctx.center else None,
         "title": undash(fix(out["title"])),   # 19절 Q22: 그날 주제만. 날짜 · 편 이름은 블로그가 붙인다
         "summary": fix(out["summary"]),
-        "overview": fix(out["overview"]),
+        "overview": fix(marks_clean(out["overview"], "한눈에 보기", log)),   # 28절 강조 **결과** · ==원인==
         "indexLine": ctx.index_line,   # 묶음 숫자, 부호 없이 '1.12% 하락' (index_line)
-        "market": fix(out["market"]),
+        "market": "",   # 28절: 쓰지 않음 (블로그가 묶음 숫자로 업종 · 종목 표)
         "shape": ctx.shape["mode"],
-        "drivers": [{"heading": fix(d["heading"]), "body": fix(d["body"]),
+        "drivers": [{"heading": fix(d["heading"]), "body": fix(marks_clean(d["body"], d["heading"], log)),
                      "topic": ctx.driver_cands[d["cand"] - 1]["topic"] if 1 <= d["cand"] <= len(ctx.driver_cands) else ""}
                     for d in out["drivers"]],
         "sectors": out["sectors"],
         "pointsTitle": points_title(day, slot),
         "points": [fix(x) for x in out["first"] + out["checks"]],
-        "oneLine": fix(out["one_line"]),
+        "takeaway": fix(out["takeaway"]),   # 28절 새 칸: 업종 · 종목 흐름의 뜻 한 문장, 혼자 읽히게
+        "oneLine": "",   # 28절: 화면에 안 씀
         "banner": banner,
         "tickers": tickers, "sources": sources, "model": (m if m.startswith("nvidia:") else f"gemini:{m}") + (" (예비 키)" if keys[0]["name"] == "예비 키" else ""),
         "calls": {k["name"]: k["used"] for k in keys},
@@ -1544,18 +1623,20 @@ def story_markdown(doc):
     out = [f"# {head} : {doc['title']}", "", f"_검색 설명: {doc['summary']}_", "",
            "배너 제목 후보: " + (" | ".join(" / ".join(c) for c in b.get("titles") or []) or "(없음)"),
            "배너 요약: " + (" · ".join(b.get("keys") or []) or "(없음)"), "",
-           "## 한눈에 보기", "", doc["overview"], "", "## 지수 · 업종 흐름", ""]
+           "_강조: **굵게** = 결과 · ==보라== = 원인 · 해석 (블로그 화면에서 색으로)_", ""]
     if doc["indexLine"]:
         out += [f"- {doc['indexLine']}", ""]
-    out += [doc["market"], "", "## 장을 움직인 변수", ""]
+    out += ["## 한눈에 보기", "", doc["overview"], "", "## 장을 움직인 변수", ""]
     for n, d in enumerate(doc["drivers"], 1):
         out += [f"**{n}. {d['heading']}**", "", d["body"], ""]
+    out += ["## 업종과 주요 종목", "", f"> {doc.get('takeaway') or '(takeaway 없음)'}", ""]
     if doc["sectors"]:
-        out += ["## 업종별로 볼 것", "", "| 업종 | 등락 (chg_pct) | 다음 장에서 볼 것 |", "|---|---|---|"]
+        out += [ "| 업종 | 등락 (chg_pct) | 다음 장에서 볼 것 |", "|---|---|---|"]
         out += [f"| {x['name']} | {x['chg_pct']:+.2f} | {x['check']} |" for x in doc["sectors"]]
         out.append("")
     out += [f"## {doc['pointsTitle']}", ""] + [f"- {x}" for x in doc["points"]]
-    out += ["", f"**핵심 한 줄**: {doc['oneLine']}", "", f"종목: {' · '.join(doc['tickers'])}",
+    size = len(unmark(doc["overview"])) + sum(len(unmark(d["body"])) for d in doc["drivers"]) + len(doc.get("takeaway") or "")
+    out += ["", f"글 길이: {size}자", f"종목: {' · '.join(doc['tickers'])}",
             f"모델: {doc['model']} · 요청 수: {doc.get('calls')} · 글의 무게: {doc.get('shape')}"]
     return "\n".join(out)
 
@@ -1593,7 +1674,7 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
     free = force or dry
     doc = {"date": day, "slot": slot, "format": "story", "reason": "", "title": "", "summary": "", "overview": "",
            "indexLine": "", "market": "", "drivers": [], "sectors": [], "pointsTitle": points_title(day, slot),
-           "points": [], "oneLine": "", "banner": {}, "tickers": [], "sources": [], "briefing": None,
+           "points": [], "takeaway": "", "oneLine": "", "banner": {}, "tickers": [], "sources": [], "briefing": None,
            "center": None, "model": ""}
     try:
         if not free and now > end:
@@ -1609,7 +1690,7 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
     except Skip as e:
         log(f"건너뜀: {e.args[0]}")
         doc.update(status="skip", reason=e.args[0], title="", summary="", overview="", market="", drivers=[],
-                   sectors=[], points=[], oneLine="", banner={}, tickers=[], sources=[])
+                   sectors=[], points=[], takeaway="", oneLine="", banner={}, tickers=[], sources=[])
     if dry:
         if doc["status"] != "skip":
             out(f"\n===== 시황 글 =====\n{story_markdown(doc)}\n===== 끝 =====\n")
