@@ -34,6 +34,9 @@ SLOTS = {
     "pm": {"start": (0, 8, 30), "end": (0, 20, 40), "market": "KR", "next": "US"},
 }
 MAX_MATERIAL_CHARS = 60_000
+# 마감 몇 분 전부터 쓸 수 있는지 (am 08:00 · pm 20:20부터). 11-20: 몇 시간 늦게 돈 예비 cron이 slot auto로
+# 다른 편을 미리 써 버림 (아침 편 04:35 = 미국 마감 전, 저녁 편 12:58 = 한국 마감 전) → 이보다 이르면 쓰지 않는다
+WRITE_OPEN_MIN = {"am": 30, "pm": 20}
 
 
 class Skip(Exception):
@@ -1657,21 +1660,32 @@ def save(key, doc, log=print):
     log(f"저장: columns/{key} rev {rev} status {doc['status']}" + (f" ({doc['reason']})" if doc.get("reason") else ""))
 
 
-def exists(key):
+def existing(key):
+    """이미 있는 편 (dict). 없으면 None."""
     import store
-    return store.init().collection("columns").document(key).get().exists
+    snap = store.init().collection("columns").document(key).get()
+    return (snap.to_dict() or {}) if snap.exists else None
 
 
 def run(day, slot, status, force=False, dry=False, log=print, out=print, model=None):
-    """한 편 쓰기. dry면 저장하지 않고 글을 out으로 (시험 결과). force · dry면 마감을 보지 않는다."""
+    """한 편 쓰기. dry면 저장하지 않고 글을 out으로 (시험 결과). force · dry면 마감 · 쓰는 시각을 보지 않는다."""
     key = f"{day}-{slot}"
     start, end = window(day, slot)
     now = datetime.now(config.KST)
     log(f"시황 해설 {key}: 재료 {start:%m-%d %H:%M} ~ {end:%m-%d %H:%M} KST, 마감 {end:%H:%M}")
-    if not force and not dry and exists(key):
-        log("이미 있음 → 끝 (다시 쓰려면 --force)")
-        return None
     free = force or dry
+    if not free:
+        opens = end - timedelta(minutes=WRITE_OPEN_MIN[slot])
+        if now < opens:   # 11-20: 늦게 돈 예비 cron이 다른 편을 미리 쓰지 못하게. 문서도 남기지 않는다
+            log(f"너무 이름 ({now:%m-%d %H:%M}, {opens:%H:%M}부터 씀) → 끝")
+            return None
+        old = existing(key)
+        if old is not None:
+            made = old.get("createdAt")
+            if not (made and old.get("status") != "skip" and made < opens):
+                log("이미 있음 → 끝 (다시 쓰려면 --force)")
+                return None
+            log(f"이미 있는 글이 너무 일찍 써짐 ({made.astimezone(config.KST):%m-%d %H:%M}) → 다시 씀")
     doc = {"date": day, "slot": slot, "format": "story", "reason": "", "title": "", "summary": "", "overview": "",
            "indexLine": "", "market": "", "drivers": [], "sectors": [], "pointsTitle": points_title(day, slot),
            "points": [], "takeaway": "", "oneLine": "", "banner": {}, "tickers": [], "sources": [], "briefing": None,

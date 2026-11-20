@@ -6,6 +6,7 @@ name: commentary
 # 저장소가 공개라 글 · 걸린 문장은 실행 로그에 찍지 않는다 (11-18). 글과 쓰는 과정은 비공개 Firestore trials에 남고 웹(설정 > 시험 결과)에서 본다
 # 정시 실행: cron-trigger/src/index.js COMMENTARY 08:10 am · 20:30 pm (KST). 아래 schedule은 예비
 #   이미 그 편이 있으면 바로 끝나고, 마감(08:30 · 20:40)을 넘겼으면 skip 문서만 남긴다
+#   11-20: schedule이 몇 시간 늦게 돌아 다른 편을 미리 썼다 → am 08:00 · pm 20:20 전이면 쓰지 않고 끝 (WRITE_OPEN_MIN)
 # 멈출 때: COMMENTARY를 빈 표로 + wrangler deploy, 아래 schedule 지움
 # 유튜브 요청 · VPN이 없어 수집(collect)과 따로 돈다 (Q1: 같은 줄에 서지 않게)
 on:
