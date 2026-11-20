@@ -843,8 +843,11 @@ STORY_RULES = """글쓰기 규칙:
    추천 · 유망 · 매력적 · 투자 기회 같은 말은 쓰지 않는다. 수급은 '매도 · 매수 · 순매도 · 순매수 · 매도세'로 쓴다 ('팔자 · 사자'는 쓰지 않는다).
 5. 실존 인물 · 회사의 비위 · 사고 주장(스캔들 · 의혹 · 수사 · 사임 · 소송 등)은 서로 다른 채널 2곳 이상이 다뤘거나 블로그 데이터 news에
    있을 때만 쓰고, 그 문장은 '~라고 ○○(채널 · 매체)가 전했습니다'로 끝낸다. 제목 · 소제목에는 넣지 않는다.
-6. 자막 문장을 그대로 옮기지 않는다. 사람은 글에서 처음 나올 때 '이름 성(소속 직함)'으로 쓴다 ('톰 리(펀드스트랫 리서치 대표)').
+6. 자막 문장을 그대로 옮기지 않는다. 외국 사람은 글에서 처음 나올 때 '이름 성(소속 직함)'으로 쓴다 ('톰 리(펀드스트랫 리서치 대표)').
    재료에 이름이 한 토막뿐이면('이사벨') 그 이름은 쓰지 않고 소속 · 직함으로만 쓴다 ('BNP 파리바 전략가는').
+   국내 사람은 이름을 쓰지 않고 '소속 직함'으로만 쓴다 ('대신증권 투자전략가는', '삼성증권 리서치센터장은').
+   한 글에 같은 소속의 국내 사람이 둘 이상 나올 때만 '소속 이름 직함'으로 가른다 ('대신증권 홍길동 투자전략가는').
+   재료에 소속(회사 · 채널)이 없는 국내 사람의 말은 인용하지 않는다.
 7. 쉬운 말로 쓴다. '투심 · 하방 압력 · 유동성 재편 · 차익 실현세 · 견인 · 이중고 · 극대화' 같은 상투어 대신
    '투자 심리 · 내리는 힘 · 돈이 옮겨 간다 · 이익을 챙기려는 매도 · 이끌었습니다'처럼 풀어 쓴다.
    분류 코드 · scope · stance · bullish 같은 내부 말은 쓰지 않는다. 종목 이름은 한글, 숫자는 '2.04%' 식.
@@ -934,6 +937,8 @@ STORY_FIX_PROMPT = """아래 JSON은 시황 기사 원고입니다. 다음 문�
   숫자를 빼면 알맹이가 없어지는 문장('외국인이 물량을 내놓으며 수급을 흔들었습니다')은 문장째 빼고 앞뒤 문장을 잇는다
 - 소속 · 직함이 재료와 다름: 재료에 적힌 소속 · 직함으로 고치거나 괄호 · 직함을 뺀다
 - 이름 한 토막: 재료에 성까지 있으면 '이름 성(소속 직함)'으로, 없으면 이름을 빼고 '소속 직함'으로 쓴다 ('BNP 파리바 전략가는')
+- 국내 사람 이름: 이름을 빼고 '소속 직함'으로 쓴다 ('대신증권 투자전략가는'). 같은 소속이 둘 이상이면 '소속 이름 직함'으로 ('대신증권 홍길동 투자전략가는').
+  재료에 소속이 없으면 그 사람의 말을 빼고 앞뒤를 잇는다
 - takeaway가 혼자 읽히지 않음: '이는 · 이 같은 · 이처럼 · 이러한 · 결국'을 빼고, '…음을 보여줍니다' 대신 그 일 자체를 쓴다. 숫자는 뺀다
 - 문단이 김: 그 문단만 3문장(많아도 4)으로 줄인다. 강조 표시(**말** · ==말==)는 남긴다
 - 강조 표시(**말** · ==말==)는 고친 문장에도 그대로 둔다. 걸린 점은 표시를 뗀 글을 보고 판단한 것이다
@@ -1250,6 +1255,41 @@ PAREN_SPEAKER = re.compile(r"(?<![가-힣A-Za-z])([가-힣A-Za-z]+(?: [가-힣A-
 TITLE_SPEAKER = re.compile(r"((?:[가-힣A-Za-z&]+ ){1,5})([가-힣]*(?:%s))(?=(?:은|는)\s)" % "|".join(sorted(TITLES, key=len, reverse=True)))
 SPEECH_END = re.compile(r"((분석|평가|전망|지적|주장|설명|강조|경고|언급|예상|진단|해석|촉구|낙관)했습니다|"
                         r"봤습니다|보았습니다|밝혔습니다|말했습니다|전했습니다|내다봤습니다)[.。]?$")
+# 11-20 사용자: 국내 사람은 이름보다 '소속 직함'이 앞서야 한다 (독자는 이름을 모르고, 이름만 앞세우면 가벼워 보임)
+#   → '소속 직함'만. 한 글에 같은 소속이 둘 이상일 때만 '소속 이름 직함'. 외국 사람은 그대로 '이름 성(소속 직함)'
+KR_SURNAME = set("김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허유남심노하곽성차주우구민진나지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용예봉경사부가복태목형피두감음빈동온호범좌팽승간상갈단견당화창")
+FOREIGN_SYL = set("스크트드프브즈츠르슈엘벨롬턴슨클켈샤셀젠잭펠")   # 외국 이름을 한글로 옮길 때 나오고 한국 이름에는 거의 없는 글자
+ORG_END = re.compile(r"(증권|투자|운용|은행|리서치|연구소|연구원|센터|경제|방송|캐피탈|캐피털|그룹|금융|파트너스|자산|생명|화재|협회|거래소|TV|tv)$")
+
+
+def korean_person(name, ctx):
+    """'홍길동'처럼 한국 사람 이름인가 (성 + 두 글자, 외국 이름 글자 없음, 외국 방송에만 나온 이름 아님)."""
+    return (bool(re.fullmatch(r"[가-힣]{3}", name)) and name[0] in KR_SURNAME and not (set(name) & FOREIGN_SYL)
+            and not ORG_END.search(name) and not foreign_name(name, ctx))
+
+
+def _org_of(aff):
+    """'대신증권 투자전략가' → '대신증권' (직함 낱말을 뺀 앞부분)."""
+    toks = aff.split()
+    while toks and any(toks[-1].endswith(t) for t in TITLES):
+        toks.pop()
+    return " ".join(toks) or aff
+
+
+def korean_orgs(sents, ctx):
+    """글 전체에서 국내 사람이 나온 소속 → {이름}. 같은 소속에 이름이 둘 이상이면 '소속 이름 직함'을 허락한다."""
+    orgs = {}
+    for s in sents:
+        for m in PAREN_SPEAKER.finditer(s):
+            if korean_person(m.group(1), ctx) and any(t in m.group(2) for t in TITLES):
+                orgs.setdefault(_org_of(m.group(2).strip()), set()).add(m.group(1))
+        for m in TITLE_SPEAKER.finditer(s):
+            toks = [t for t in m.group(1).split() if t not in LEAD_WORDS]
+            if len(toks) >= 2 and korean_person(toks[-1], ctx):
+                orgs.setdefault(" ".join(toks[:-1]), set()).add(toks[-1])
+    return orgs
+
+
 LEAD_WORDS = {"반면", "이에", "대해", "또한", "한편", "그러나", "다만", "특히", "이와", "관련해", "앞서", "이날", "여기에"}
 
 
@@ -1267,10 +1307,23 @@ def speaker_problems(s, ctx):
     """문장에 나온 말한 사람 · 소속 · 직함이 재료에 그렇게 있는지. → ([걸린 점], {지울 문자열: 바꿀 문자열})"""
     out, strip = [], {}
     src = ctx.material
+    dup = {o for o, names in (getattr(ctx, "kr_orgs", None) or {}).items() if len(names) >= 2}
     for m in PAREN_SPEAKER.finditer(s):
         name, aff = m.group(1), m.group(2).strip()
         if re.search(r"[\d%]", aff) or not re.search(r"[가-힣A-Za-z]", aff):
             continue   # '삼성전자(005930.KS)가' · '에너지(−1.91%)와'
+        if name in src and any(t in aff for t in TITLES) and korean_person(name, ctx):   # 11-20: '홍길동(대신증권 투자전략가)는'
+            org = _org_of(aff)
+            title = aff[len(org):].strip() if aff.startswith(org) else ""
+            p = s[m.end():m.end() + 1]
+            if org in dup and title:
+                to = f"{org} {name} {title}"
+                out.append(f"{AFFIL}국내 사람 '{name}': 같은 소속이 둘이라 '{to}'처럼 소속 · 이름 · 직함 순으로")
+            else:
+                to = aff
+                out.append(f"{AFFIL}국내 사람 '{name}': 이름을 빼고 '{aff}'처럼 소속 · 직함만")
+            strip[m.group(0) + p] = to + josa(to, p)
+            continue
         toks = name.split()
         if len(toks) == 1:
             fulls = {f"{name} {y}" for y in re.findall(rf"(?<![가-힣]){re.escape(name)} ([가-힣]{{2,5}})", src)
@@ -1300,6 +1353,15 @@ def speaker_problems(s, ctx):
         base = next((t for t in TITLES if title.endswith(t)), title)
         if not toks or all(len(t) < 2 for t in toks):
             continue
+        if toks[-1] in src and korean_person(toks[-1], ctx):   # 11-20: '대신증권 홍길동 투자전략가는' · '홍길동 투자전략가는'
+            org = " ".join(toks[:-1])
+            if not org:
+                out.append(f"국내 사람 '{toks[-1]}'의 소속이 없음 (재료의 소속을 붙여 '소속 직함'으로 쓰거나 그 말을 뺀다)")
+                continue
+            if org not in dup:
+                out.append(f"{AFFIL}국내 사람 '{toks[-1]}': 이름을 빼고 '{org} {title}'처럼 소속 · 직함만")
+                strip[f"{toks[-1]} {title}"] = title
+                continue
         blocks = _blocks_with(ctx, toks[:2]) or _blocks_with(ctx, toks[:1])
         if not blocks:
             if not any(t in src for t in toks if len(t) >= 2):
@@ -1398,6 +1460,7 @@ def story_problems(out, ctx):
     units += [(x, False) for k in STORY_PARAS for x in sentences(out[k])]
     units += [(x, False) for d in out["drivers"] for x in sentences(d["body"])]
     prose = {x for x, title in units if not title}   # 문장으로 쓰는 칸만 '-습니다'체를 본다 (관전 포인트 · 표는 구절)
+    ctx.kr_orgs = korean_orgs([unmark(x) for x in prose], ctx)   # 11-20: 같은 소속 국내 사람이 둘 이상인지
     units += [(x, False) for x in out["checks"]] + [(x["check"], False) for x in out["sectors"]]
     found = []
     for s, title in units:
