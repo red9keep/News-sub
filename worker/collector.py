@@ -381,6 +381,15 @@ class Collector:
                     self.run.count("pending")
                     self.waits += 1
                     return
+                if not result and self.wait_for_captions(ch_name, title):
+                    # 매드머니 본방송: 게시 뒤 30 ~ 60분이면 자동 자막이 생긴다. 마지막 회차(11:30) 전에는 받아쓰기 대신 다음 회차에 자막을 다시 본다 (40절)
+                    store.set_video(vid, **meta, status="pending", deferDay=self.day_key)
+                    self.run.log(f"[{ch_name}] 자막이 아직 없어 다음 회차에 자막을 다시 봄 "
+                                 f"({config.MAD_MONEY_CAPTION_WAIT_UNTIL[0]}:{config.MAD_MONEY_CAPTION_WAIT_UNTIL[1]:02d}부터는 받아쓰기): "
+                                 f"{short(title)}", "skip")
+                    self.run.count("pending")
+                    self.waits += 1
+                    return
             except captions.Blocked as e:
                 self.on_blocked(e)
                 self.defer(vid, meta, ch_name, title)
@@ -502,7 +511,34 @@ class Collector:
         cats = ", ".join(data["categories"]) or "분류 없음"
         picks = f", 종목 의견 {len(data['picks'])}건" if data["picks"] else ""
         self.run.log(f"[{ch_name}] 요약 저장 ({cats}{picks}): {short(title)}")
+        self.ping_blog(vid, ch_name, title)
         return True
+
+    def wait_for_captions(self, ch_name, title):
+        """자막이 없을 때 받아쓰기 대신 기다릴까 — 매드머니 본방송이고 한국 시각이 마지막 필수 회차(11:30) 전이면 True."""
+        if not notify.is_mad_money_episode(ch_name, title):
+            return False
+        now = self.now.astimezone(config.KST)
+        return (now.hour, now.minute) < config.MAD_MONEY_CAPTION_WAIT_UNTIL
+
+    def ping_blog(self, vid, ch_name, title):
+        """매드머니 본방송 요약을 저장했으면 블로그 방송 기록 실행을 한 번 건다 (39절 Q36). 같은 영상은 한 번만, 실패해도 수집은 그대로."""
+        if not notify.is_mad_money_episode(ch_name, title):
+            return
+        try:
+            if (store.get_video(vid) or {}).get("blogNotifiedAt"):
+                return
+        except Exception:
+            pass
+        ok, why = notify.blog_dispatch()
+        if ok:
+            try:
+                store.set_video(vid, blogNotifiedAt=store.now_utc())
+            except Exception:
+                pass
+            self.run.log(f"[{ch_name}] 블로그 방송 기록 실행 요청 보냄: {short(title)}")
+        else:
+            self.run.log(f"[{ch_name}] 블로그 실행 요청 못 보냄 ({why}) — 블로그 11:50 예비 확인으로 받음: {short(title)}", "skip")
 
     def process_pending_summaries(self):
         """앞선 실행에서 요약하지 못한 영상을 몇 개씩 다시 요약한다."""

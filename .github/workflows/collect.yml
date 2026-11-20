@@ -104,6 +104,7 @@ jobs:
           LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
           NVIDIA_MODEL: ${{ vars.NVIDIA_MODEL }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          ALPHASCOPE_DISPATCH_TOKEN: ${{ secrets.ALPHASCOPE_DISPATCH_TOKEN }}   # 매드머니 요약 뒤 블로그 실행 요청 (요청 문서 39 · 40절). 없으면 안 보냄
           STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           GEMINI_MODEL_FALLBACKS: ${{ vars.GEMINI_MODEL_FALLBACKS }}

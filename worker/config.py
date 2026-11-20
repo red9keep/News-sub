@@ -94,3 +94,13 @@ STORAGE_PREFIX = "ai_ready_texts"
 # 필수 채널 빠짐 알림(notify.required_missing)에서 볼 요일 (월=0). 채널 문서에 weekdays가 있으면 그것이 먼저, 없으면 여기, 그다음 월 ~ 금.
 # Mad Money는 미국 저녁 방송이라 한국 시간 다음 날 아침(화 ~ 토)에 올라온다 (10-21 ~ 11-04 기록)
 REQUIRED_WEEKDAYS = {"CNBC Mad Money": [1, 2, 3, 4, 5]}
+
+# 매드머니 본방송 (요청 문서 39 · 40절, 11-21). 원제목 'Mad Money 11/19/26 | Audio Only' — 클립 · 쇼츠는 이 모양이 아니다
+MAD_MONEY_CHANNEL = "CNBC Mad Money"
+MAD_MONEY_TITLE = r"^\s*Mad Money \d{1,2}/\d{1,2}/\d{2,4}\b"
+# 자막이 아직 없으면 이 시각(KST) 전에는 받아쓰기하지 않고 다음 회차에 자막을 다시 본다.
+# 11-19: 10:45 Gemini 받아쓰기가 14분 뒤 시간 초과 → 11:24 자동 자막으로 끝남. 필수 채널 마지막 회차(11:30)는 기다리지 않고 받아쓴다
+MAD_MONEY_CAPTION_WAIT_UNTIL = (11, 30)
+# 요약 저장 뒤 블로그 방송 기록 실행 요청 (Q36). 토큰이 없으면 보내지 않는다
+BLOG_DISPATCH_URL = "https://api.github.com/repos/red6keep-droid/alphascope/actions/workflows/media-daily.yml/dispatches"
+BLOG_DISPATCH_TOKEN = os.environ.get("ALPHASCOPE_DISPATCH_TOKEN", "").strip()

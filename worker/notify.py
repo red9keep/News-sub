@@ -151,3 +151,26 @@ if __name__ == "__main__":
         ok = send([f"시험 — 가짜 실패 (저장 실패 흉내: Firestore 쓰기 접속 거부), 무시해도 됨 "
                    f"({datetime.now(config.KST):%m.%d %H:%M})"])
         sys.exit(0 if ok else 1)
+
+
+def is_mad_money_episode(channel, title):
+    """매드머니 본방송인가 — 채널 'CNBC Mad Money' + 원제목 'Mad Money 월/일/연' (클립 · 쇼츠 제외, 요청 문서 40절)."""
+    import re
+    return channel == config.MAD_MONEY_CHANNEL and bool(re.match(config.MAD_MONEY_TITLE, title or ""))
+
+
+def blog_dispatch():
+    """블로그 방송 기록 실행(media-daily.yml)을 한 번 건다 (요청 문서 39절 Q36). (성공 여부, 한국어 사유).
+    토큰은 어디에도 찍지 않는다. 실패해도 수집은 그대로 — 블로그는 11:50 예비 확인으로 받는다."""
+    if not config.BLOG_DISPATCH_TOKEN:
+        return False, "토큰(ALPHASCOPE_DISPATCH_TOKEN) 없음"
+    try:
+        r = requests.post(config.BLOG_DISPATCH_URL, timeout=10, json={
+            "ref": "main", "inputs": {"scheduled": "true", "phase": "2", "records_only": "true"}},
+            headers={"Authorization": f"Bearer {config.BLOG_DISPATCH_TOKEN}", "Accept": "application/vnd.github+json",
+                     "X-GitHub-Api-Version": "2022-11-28"})
+    except requests.RequestException as e:
+        return False, f"요청 실패 ({type(e).__name__})"
+    if r.status_code == 204:
+        return True, "204"
+    return False, f"응답 {r.status_code}"
