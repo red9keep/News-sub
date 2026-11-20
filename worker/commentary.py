@@ -16,6 +16,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 
@@ -40,6 +41,8 @@ WRITE_OPEN_MIN = {"am": 30, "pm": 20}
 # 저녁 편 1차 · 2차 (31 · 32절, 11-20): 1차는 16:40에 써서 16:55까지 저장 (블로그 17:00 발행),
 # 2차는 20:30에 저녁 방송을 보태 같은 문서를 rev 올려 다시 씀 (블로그 21:00이 rev가 오르면 고쳐 씀)
 PM1_END = (0, 16, 55)
+PM1_BRIEFING_WAIT = (16, 50)   # 35절 Q33: 1차 때 묶음이 없으면 이 시각까지 기다리며 다시 본다
+BRIEFING_POLL_SEC = 150
 
 
 def pm_round(now):
@@ -1771,14 +1774,23 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
         if not free and now > end:
             raise Skip("마감 넘김")
         items = load_summaries(start, end if free else min(end, now))
+        briefing = load_briefing(day, slot, log)
+        if briefing is None and rnd == 1 and not free:   # 35절 Q33: 묶음이 늦는 날 16:50까지 2 ~ 3분마다 다시 본다
+            until = start.replace(hour=PM1_BRIEFING_WAIT[0], minute=PM1_BRIEFING_WAIT[1])
+            while briefing is None and datetime.now(config.KST) + timedelta(seconds=BRIEFING_POLL_SEC) <= until:
+                log(f"묶음 기다림 ({until:%H:%M}까지, {BRIEFING_POLL_SEC}초 뒤 다시)")
+                time.sleep(BRIEFING_POLL_SEC)
+                briefing = load_briefing(day, slot, log)
+            if briefing is not None:
+                items = load_summaries(start, min(end, datetime.now(config.KST)))
         made = (old or {}).get("createdAt")
         if old and old.get("status") == "ready" and old.get("round") == 1 and made and made >= start.replace(hour=12):
             new = [it for it in items if it.get("createdAt") and it["createdAt"] > made]
-            if not new:   # 2차: 1차 뒤 새 영상이 없으면 요청을 쓰지 않고 1차 글을 그대로 둔다
-                log("1차 뒤 새 영상 없음 → 1차 글 그대로 (rev 그대로)")
+            got = briefing is not None and not old.get("briefing")
+            if not new and not got:   # 2차: 1차 뒤 새 영상도 새 묶음도 없으면 요청을 쓰지 않고 1차 글을 그대로 둔다
+                log("1차 뒤 새 영상 · 새 묶음 없음 → 1차 글 그대로 (rev 그대로)")
                 return None
-            log(f"1차 뒤 새 영상 {len(new)}개")
-        briefing = load_briefing(day, slot, log)
+            log(f"1차 뒤 새 영상 {len(new)}개" + (" · 1차에 없던 묶음 생김" if got else ""))
         log(f"재료 영상 {len(items)}개, 묶음 {'있음' if briefing else '없음'}")
         doc["briefing"] = f"{day}-{slot}" if briefing else None
         doc.update(story_compose(day, slot, items, briefing, model, log, deadline=None if free else end))
