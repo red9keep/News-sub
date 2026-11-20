@@ -12,7 +12,8 @@ name: commentary
 on:
   schedule:
     - cron: "14 23 * * *"   # 08:14 KST am (slot auto: 낮 12시 전이면 am)
-    - cron: "33 11 * * *"   # 20:33 KST pm
+    - cron: "43 7 * * *"    # 16:43 KST pm 1차 (11-20, 16:55까지 저장)
+    - cron: "33 11 * * *"   # 20:33 KST pm 2차
   workflow_dispatch:
     inputs:
       slot:

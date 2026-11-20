@@ -37,6 +37,14 @@ MAX_MATERIAL_CHARS = 60_000
 # 마감 몇 분 전부터 쓸 수 있는지 (am 08:00 · pm 20:20부터). 11-20: 몇 시간 늦게 돈 예비 cron이 slot auto로
 # 다른 편을 미리 써 버림 (아침 편 04:35 = 미국 마감 전, 저녁 편 12:58 = 한국 마감 전) → 이보다 이르면 쓰지 않는다
 WRITE_OPEN_MIN = {"am": 30, "pm": 20}
+# 저녁 편 1차 · 2차 (31 · 32절, 11-20): 1차는 16:40에 써서 16:55까지 저장 (블로그 17:00 발행),
+# 2차는 20:30에 저녁 방송을 보태 같은 문서를 rev 올려 다시 씀 (블로그 21:00이 rev가 오르면 고쳐 씀)
+PM1_END = (0, 16, 55)
+
+
+def pm_round(now):
+    """저녁 편 몇 차인가. 18시 전이면 1차."""
+    return 1 if now.hour < 18 else 2
 
 
 class Skip(Exception):
@@ -1730,13 +1738,19 @@ def existing(key):
     return (snap.to_dict() or {}) if snap.exists else None
 
 
-def run(day, slot, status, force=False, dry=False, log=print, out=print, model=None):
-    """한 편 쓰기. dry면 저장하지 않고 글을 out으로 (시험 결과). force · dry면 마감 · 쓰는 시각을 보지 않는다."""
+def run(day, slot, status, force=False, dry=False, log=print, out=print, model=None, rnd=None):
+    """한 편 쓰기. dry면 저장하지 않고 글을 out으로 (시험 결과). force · dry면 마감 · 쓰는 시각을 보지 않는다.
+    rnd: 저녁 편 1차(16:55 마감) · 2차(20:40 마감). 비우면 지금 시각으로 정한다."""
     key = f"{day}-{slot}"
     start, end = window(day, slot)
     now = datetime.now(config.KST)
-    log(f"시황 해설 {key}: 재료 {start:%m-%d %H:%M} ~ {end:%m-%d %H:%M} KST, 마감 {end:%H:%M}")
+    if slot == "pm":
+        rnd = rnd or pm_round(now)
+        if rnd == 1:
+            end = start.replace(hour=PM1_END[1], minute=PM1_END[2])
+    log(f"시황 해설 {key}{f' {rnd}차' if rnd else ''}: 재료 {start:%m-%d %H:%M} ~ {end:%m-%d %H:%M} KST, 마감 {end:%H:%M}")
     free = force or dry
+    old = None
     if not free:
         opens = end - timedelta(minutes=WRITE_OPEN_MIN[slot])
         if now < opens:   # 11-20: 늦게 돈 예비 cron이 다른 편을 미리 쓰지 못하게. 문서도 남기지 않는다
@@ -1745,10 +1759,10 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
         old = existing(key)
         if old is not None:
             made = old.get("createdAt")
-            if not (made and old.get("status") != "skip" and made < opens):
+            if not (made and made < opens):
                 log("이미 있음 → 끝 (다시 쓰려면 --force)")
                 return None
-            log(f"이미 있는 글이 너무 일찍 써짐 ({made.astimezone(config.KST):%m-%d %H:%M}) → 다시 씀")
+            log(f"이미 있는 글이 이번 차례 전에 써짐 ({made.astimezone(config.KST):%m-%d %H:%M}, rev {old.get('rev')}) → 다시 씀")
     doc = {"date": day, "slot": slot, "format": "story", "reason": "", "title": "", "summary": "", "overview": "",
            "indexLine": "", "market": "", "drivers": [], "sectors": [], "pointsTitle": points_title(day, slot),
            "points": [], "takeaway": "", "oneLine": "", "banner": {}, "tickers": [], "sources": [], "briefing": None,
@@ -1757,6 +1771,13 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
         if not free and now > end:
             raise Skip("마감 넘김")
         items = load_summaries(start, end if free else min(end, now))
+        made = (old or {}).get("createdAt")
+        if old and old.get("status") == "ready" and old.get("round") == 1 and made and made >= start.replace(hour=12):
+            new = [it for it in items if it.get("createdAt") and it["createdAt"] > made]
+            if not new:   # 2차: 1차 뒤 새 영상이 없으면 요청을 쓰지 않고 1차 글을 그대로 둔다
+                log("1차 뒤 새 영상 없음 → 1차 글 그대로 (rev 그대로)")
+                return None
+            log(f"1차 뒤 새 영상 {len(new)}개")
         briefing = load_briefing(day, slot, log)
         log(f"재료 영상 {len(items)}개, 묶음 {'있음' if briefing else '없음'}")
         doc["briefing"] = f"{day}-{slot}" if briefing else None
@@ -1764,8 +1785,13 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
         if not free and datetime.now(config.KST) > end:
             raise Skip("마감 넘김")
         doc["status"] = status
+        if rnd:
+            doc["round"] = rnd
     except Skip as e:
         log(f"건너뜀: {e.args[0]}")
+        if old and old.get("status") == "ready" and not dry:   # 2차가 안 되면 1차 글을 skip으로 덮지 않는다
+            log("이미 있는 ready 글을 그대로 둠")
+            return None
         doc.update(status="skip", reason=e.args[0], title="", summary="", overview="", market="", drivers=[],
                    sectors=[], points=[], takeaway="", oneLine="", banner={}, tickers=[], sources=[])
     if dry:
@@ -1787,6 +1813,7 @@ def main():
     ap.add_argument("--dry", action="store_true", help="columns에 저장하지 않고 결과만 낸다 (Actions에서는 시험 결과에)")
     ap.add_argument("--story", action="store_true", help="--dry와 같음 (11-17 시험 모드 이름, 워크플로 입력 호환)")
     ap.add_argument("--model", help=f"쓸 모델 (기본 {STORY_MODEL}, NVIDIA는 nvidia:z-ai/glm-5.3)")
+    ap.add_argument("--round", type=int, choices=[1, 2], help="저녁 편 1차(16:55 마감) · 2차(20:40 마감). 기본: 18시 전이면 1차")
     a = ap.parse_args()
     now = datetime.now(config.KST)
     slot = a.slot if a.slot != "auto" else ("am" if now.hour < 12 else "pm")
@@ -1801,7 +1828,7 @@ def main():
     kind = "시험 (dry)" if dry else "쓰는 과정"
     rep = private.Report("commentary", f"시황 해설 {day}-{slot} {kind}")
     try:
-        run(day, slot, status, force=a.force, dry=dry, log=rep.log, out=rep.line, model=a.model)
+        run(day, slot, status, force=a.force, dry=dry, log=rep.log, out=rep.line, model=a.model, rnd=a.round)
     finally:
         rep.save()
 
