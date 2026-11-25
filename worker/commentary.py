@@ -43,11 +43,22 @@ WRITE_OPEN_MIN = {"am": 30, "pm": 20}
 PM1_END = (0, 16, 55)
 PM1_BRIEFING_WAIT = (16, 50)   # 35절 Q33: 1차 때 묶음이 없으면 이 시각까지 기다리며 다시 본다
 BRIEFING_POLL_SEC = 150
+# 아침 편 1차 · 2차 (43 · 44절 Q40, 11-25): 11-24 아침 편이 08:11 ~ 08:27 Gemini 혼잡으로 통째로 빠짐 → 쓸 기회를 한 번 더.
+# 1차는 07:10에 써서 07:40까지 저장 (묶음은 06:42 ~ 07:07에 올라옴), 2차는 08:10에 당잠사 07:35 회차를 보태 다시 씀.
+# 2차가 안 되면 1차 글이 그대로 남는다 (run의 '이미 있는 ready 글을 그대로 둠')
+AM1_END = (0, 7, 40)
+AM1_BRIEFING_WAIT = (7, 25)
+ROUND1 = {"am": (AM1_END, AM1_BRIEFING_WAIT), "pm": (PM1_END, PM1_BRIEFING_WAIT)}
 
 
 def pm_round(now):
     """저녁 편 몇 차인가. 18시 전이면 1차."""
     return 1 if now.hour < 18 else 2
+
+
+def am_round(now):
+    """아침 편 몇 차인가. 07:50 전이면 1차 (1차 마감 07:40 · 2차는 08:00부터 씀)."""
+    return 1 if (now.hour, now.minute) < (7, 50) else 2
 
 
 class Skip(Exception):
@@ -793,6 +804,13 @@ STORY_REWRITES = 2     # 틀이 어긋나면(제목에 걸린 점 등) 처음부
 # 편당 요청 상한 (키마다, 재시도 · 고쳐 쓰기 · 다시 쓰기 · 기다린 뒤 다시 모두 포함). Hydrogen 무료 하루 20회 (11-18 AI Studio)
 # → 두 편 12회 + 받아쓰기 예비(4-hydrogen) · 손 시험 몫 8회. 보통 편은 글 1 + 고쳐 쓰기 0 ~ 2 = 1 ~ 3회
 STORY_BUDGET = 6
+# 44절 (11-25): 상한은 실행마다 따로라 한 하루(KST 17:00 ~ 17:00)에 저녁 2차 · 아침 1차 · 아침 2차 · 저녁 1차 네 번이 든다.
+# 6 × 4 = 24로 하루 20을 넘으므로 편 · 차마다 나눈다 (합 17, 남는 3은 받아쓰기 예비 · 손 시험)
+STORY_BUDGETS = {("am", 1): 3, ("am", 2): 5, ("pm", 1): 4, ("pm", 2): 5}
+# 43절 Q41: Hydrogen이 두 키 모두 안 되면 쉬기 전에 이 모델로 그 편을 써 본다 (11-18까지 시황을 쓰던 모델, 한도를 따로 셈).
+# 받아쓰기(GEMINI_MODEL)와 하루 20회를 나눠 쓰므로 편당 키마다 STORY_FALLBACK_BUDGET번까지. flash-lite로는 여전히 안 간다
+STORY_FALLBACK = "gemini-3.6-flash"
+STORY_FALLBACK_BUDGET = 3
 STORY_ATTEMPTS = 2     # 호출 하나에 보내는 요청 수 (503 · 깨진 JSON이면 한 번 더). 429는 기다리지 않고 바로 다음 키
 
 
@@ -803,22 +821,25 @@ class OutOfBudget(llm.LLMError):
 def story_keys():
     """[{name, key, used}] — 기본 키, 그다음 예비 키(GEMINI_API_KEY_BACKUP, 있으면). used = 이 편에서 보낸 요청 수."""
     if config.LLM_PROVIDER == "nvidia":
-        return [{"name": "NVIDIA 키", "key": None, "used": 0}]
-    keys = [{"name": "기본 키", "key": config.GEMINI_API_KEY, "used": 0}]
+        return [{"name": "NVIDIA 키", "key": None, "used": 0, "fb": 0}]
+    keys = [{"name": "기본 키", "key": config.GEMINI_API_KEY, "used": 0, "fb": 0}]
     if config.GEMINI_API_KEY_BACKUP and config.GEMINI_API_KEY_BACKUP != config.GEMINI_API_KEY:
-        keys.append({"name": "예비 키", "key": config.GEMINI_API_KEY_BACKUP, "used": 0})
+        keys.append({"name": "예비 키", "key": config.GEMINI_API_KEY_BACKUP, "used": 0, "fb": 0})
     return keys
 
 
-def story_call(prompt, what, keys, log):
+def story_call(prompt, what, keys, log, budget=STORY_BUDGET, field="used", model=None):
     """기본 키로 안 되면 예비 키로. 둘 다 안 되면 LLMError (둘 다 상한을 다 썼으면 OutOfBudget).
-    된 키를 맨 앞으로 옮겨 다음 호출도 그 키부터 쓴다."""
+    된 키를 맨 앞으로 옮겨 다음 호출도 그 키부터 쓴다.
+    field: 요청 수를 세는 칸 ("used" 기본 모델 · "fb" 예비 모델), budget: 그 칸의 키마다 상한. model을 주면 그 Gemini 모델로."""
     import transcribe
+    if model:
+        config.GEMINI_TEXT_MODEL = model
     last = None
     for i, k in enumerate(list(keys)):
-        left = STORY_BUDGET - k["used"]
+        left = budget - k[field]
         if left <= 0:
-            log(f"  {k['name']}: 이 편 요청 {STORY_BUDGET}번을 다 씀" + (" → 다음 키로" if i + 1 < len(keys) else ""))
+            log(f"  {k['name']}: 이 편 요청 {budget}번을 다 씀" + (" → 다음 키로" if i + 1 < len(keys) else ""))
             continue
         if k["key"] is not None:
             config.GEMINI_API_KEY, transcribe._client = k["key"], None
@@ -831,12 +852,12 @@ def story_call(prompt, what, keys, log):
             log(f"  {k['name']}: 호출 실패 ({e})" + (" → 다음 키로" if i + 1 < len(keys) else ""))
             continue
         finally:
-            k["used"] += llm.requests_made - before
+            k[field] += llm.requests_made - before
         if i:
             keys.insert(0, keys.pop(i))
         return r
-    if all(k["used"] >= STORY_BUDGET for k in keys):
-        raise OutOfBudget(f"모든 키가 이 편 요청 상한 {STORY_BUDGET}번을 다 씀")
+    if all(k[field] >= budget for k in keys):
+        raise OutOfBudget(f"모든 키가 이 편 요청 상한 {budget}번을 다 씀")
     raise last
 
 STORY_RULES = """글쓰기 규칙:
@@ -1543,11 +1564,12 @@ def story_drop(out, found):
     return out
 
 
-def story_compose(day, slot, items, briefing, model=None, log=print, deadline=None):
+def story_compose(day, slot, items, briefing, model=None, log=print, deadline=None, budget=STORY_BUDGET):
     """재료 → columns 문서 칸 (status 제외). 쓰지 않을 편이면 Skip.
 
     호출: 글 전체 1번 → 걸린 문장만 고쳐 쓰기 최대 2번 → 그래도 남으면 그 문장을 뺀다. 틀이 어긋나면 처음부터 (STORY_REWRITES).
-    호출이 안 되면 STORY_PAUSE_SEC 쉬고 다시, 마감(deadline)과 STORY_WAIT_MIN 안에서만. 키마다 편당 요청 STORY_BUDGET번까지."""
+    호출이 안 되면 STORY_PAUSE_SEC 쉬고 다시, 마감(deadline)과 STORY_WAIT_MIN 안에서만. 키마다 편당 요청 budget번까지.
+    model을 따로 주지 않은 실행은 기본 모델이 모든 키로 안 될 때 쉬기 전에 STORY_FALLBACK으로 한 번 써 본다 (43절 Q41)."""
     if briefing and briefing.get("session") == "closed":
         raise Skip("휴장")
     if not items:
@@ -1584,6 +1606,13 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
     config.GEMINI_TEXT_MODEL, config.GEMINI_TEXT_FALLBACK = m, "off"
     keys, main_key = story_keys(), config.GEMINI_API_KEY
     started, rewrites = time.monotonic(), 0
+    fb = STORY_FALLBACK if not model and config.LLM_PROVIDER != "nvidia" and STORY_FALLBACK != m else None
+    cur, fb_out, main_err = m, False, None   # cur: 지금 쓰는 모델 · fb_out: 예비 모델 상한을 다 씀
+
+    def call(prompt, what):
+        if cur == m:
+            return story_call(prompt, f"{what} {m}", keys, log, budget, "used", None if m.startswith("nvidia:") else m)
+        return story_call(prompt, f"{what} {cur}", keys, log, STORY_FALLBACK_BUDGET, "fb", cur)
 
     def late(extra=0):
         return deadline is not None and datetime.now(config.KST) + timedelta(seconds=extra) > deadline
@@ -1592,22 +1621,22 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
             config.GEMINI_API_KEY = main_key
             raise Skip("마감 넘김")
         try:
-            raw = story_call(prompt, f"이어 쓰는 글 {m}", keys, log)
+            raw = call(prompt, "이어 쓰는 글")
             out = story_ok(story_out(raw, ctx))
             found = story_problems(out, ctx)
             for turn in (1, 2):   # 문단 첫 문장이 빠지면 글이 끊기므로 두 번까지 고쳐 쓰게 한다 (11-17 시험)
                 if not found:
                     break
-                log(f"  {m}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함 ({turn}번째)")
+                log(f"  {cur}: 걸린 문장 {len(found)}개 → 그 문장만 고쳐 쓰게 함 ({turn}번째)")
                 for x, _, pr in found:
                     log(f"    - {' · '.join(pr)}:", f"{near_numbers(x, ctx)} {x}")
                 probs = "\n".join(f'- "{x}" → {" · ".join(pr)}' for x, _, pr in found)
                 try:
-                    raw2 = story_call(STORY_FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
-                                      f"이어 쓰는 글 고쳐 쓰기 {m}", keys, log)
+                    raw2 = call(STORY_FIX_PROMPT.format(problems=probs, draft=json.dumps(raw, ensure_ascii=False)),
+                                "이어 쓰는 글 고쳐 쓰기")
                     out2 = story_ok(story_out(raw2, ctx))
                 except ValueError as e:   # 고쳐 쓴 글의 틀이 어긋남 → 처음 쓴 글에서 걸린 문장만 뺀다
-                    log(f"  {m}: 고쳐 쓴 글이 틀에 안 맞음 ({e}) → 처음 쓴 글에서 걸린 문장만 뺌")
+                    log(f"  {cur}: 고쳐 쓴 글이 틀에 안 맞음 ({e}) → 처음 쓴 글에서 걸린 문장만 뺌")
                     break
                 raw, out = raw2, out2
                 found = story_problems(out, ctx)
@@ -1630,7 +1659,15 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
                     log(f"    문장 뺌 ({' · '.join(pr)}):", x)
                 out = story_ok(story_drop(out, found))
             break
-        except llm.LLMError as e:   # 두 키 모두 안 됨 (한도 · 혼잡) → 쉬었다가 다시. 건너뛰지 않고 기다린다
+        except llm.LLMError as e:   # 두 키 모두 안 됨 (한도 · 혼잡) → 예비 모델로 한 번, 그래도 안 되면 쉬었다가 다시
+            if cur == m and fb and not fb_out and not late():
+                log(f"  {m}: 모든 키로 호출 실패 ({e}) → 쉬기 전에 {fb}로 이 편을 써 봄")
+                cur, main_err = fb, e
+                continue
+            if cur != m:   # 예비 모델도 안 됨 → 기본 모델로 돌아가고, 기다릴지는 기본 모델이 실패한 까닭으로 정한다
+                log(f"  {cur}: 호출 실패 ({e}) → {m}로 돌아감")
+                fb_out = fb_out or isinstance(e, OutOfBudget)
+                cur, e = m, main_err
             waited = (time.monotonic() - started) / 60
             if isinstance(e, OutOfBudget) or waited + STORY_PAUSE_SEC / 60 > STORY_WAIT_MIN or late(STORY_PAUSE_SEC):
                 config.GEMINI_API_KEY = main_key
@@ -1643,12 +1680,15 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
         except ValueError as e:
             rewrites += 1
             # 오류 글에 걸린 제목 · 소제목이 들어 있을 수 있어 뒤 인자로 뺀다
-            log(f"  {m}: 틀 어긋남 → " + ("처음부터 다시 씀" if rewrites < STORY_REWRITES else "그 편 건너뜀") + ":", e)
+            log(f"  {cur}: 틀 어긋남 → " + ("처음부터 다시 씀" if rewrites < STORY_REWRITES else "그 편 건너뜀") + ":", e)
             if rewrites >= STORY_REWRITES:
                 config.GEMINI_API_KEY = main_key
                 raise Skip("틀 어긋남") from e
     config.GEMINI_API_KEY = main_key
-    log("요청 수: " + " · ".join(f"{k['name']} {k['used']}번" for k in keys) + f" (키마다 상한 {STORY_BUDGET})")
+    log("요청 수: " + " · ".join(f"{k['name']} {k['used']}번" for k in keys) + f" (키마다 상한 {budget})"
+        + (f" · {fb} " + " · ".join(f"{k['name']} {k['fb']}번" for k in keys) + f" (상한 {STORY_FALLBACK_BUDGET})"
+           if any(k["fb"] for k in keys) else ""))
+    m = cur   # 글을 쓴 모델 (예비 모델로 썼으면 model 칸에 그 모델)
     size = len(unmark(out["overview"])) + sum(len(unmark(d["body"])) for d in out["drivers"]) + len(out["takeaway"])
     log(f"글 길이 {size}자 (28절 {STORY_LEN[0]} ~ {STORY_LEN[1]}자) · 변수 {len(out['drivers'])}개 · takeaway {'있음' if out['takeaway'] else '없음'}")
     # 같은 지표 두 값 · 이름 두 표기 (14절 2번 · 7번)
@@ -1688,7 +1728,7 @@ def story_compose(day, slot, items, briefing, model=None, log=print, deadline=No
         "oneLine": "",   # 28절: 화면에 안 씀
         "banner": banner,
         "tickers": tickers, "sources": sources, "model": (m if m.startswith("nvidia:") else f"gemini:{m}") + (" (예비 키)" if keys[0]["name"] == "예비 키" else ""),
-        "calls": {k["name"]: k["used"] for k in keys},
+        "calls": {k["name"]: k["used"] + k["fb"] for k in keys},
     }
 
 
@@ -1743,14 +1783,14 @@ def existing(key):
 
 def run(day, slot, status, force=False, dry=False, log=print, out=print, model=None, rnd=None):
     """한 편 쓰기. dry면 저장하지 않고 글을 out으로 (시험 결과). force · dry면 마감 · 쓰는 시각을 보지 않는다.
-    rnd: 저녁 편 1차(16:55 마감) · 2차(20:40 마감). 비우면 지금 시각으로 정한다."""
+    rnd: 1차 (아침 07:40 · 저녁 16:55 마감) · 2차 (아침 08:30 · 저녁 20:40 마감). 비우면 지금 시각으로 정한다."""
     key = f"{day}-{slot}"
     start, end = window(day, slot)
     now = datetime.now(config.KST)
-    if slot == "pm":
-        rnd = rnd or pm_round(now)
-        if rnd == 1:
-            end = start.replace(hour=PM1_END[1], minute=PM1_END[2])
+    rnd = rnd or (pm_round(now) if slot == "pm" else am_round(now))
+    r1_end, r1_wait = ROUND1[slot]
+    if rnd == 1:
+        end = end.replace(hour=r1_end[1], minute=r1_end[2])   # 1차 마감은 2차 마감과 같은 날
     log(f"시황 해설 {key}{f' {rnd}차' if rnd else ''}: 재료 {start:%m-%d %H:%M} ~ {end:%m-%d %H:%M} KST, 마감 {end:%H:%M}")
     free = force or dry
     old = None
@@ -1775,8 +1815,8 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
             raise Skip("마감 넘김")
         items = load_summaries(start, end if free else min(end, now))
         briefing = load_briefing(day, slot, log)
-        if briefing is None and rnd == 1 and not free:   # 35절 Q33: 묶음이 늦는 날 16:50까지 2 ~ 3분마다 다시 본다
-            until = start.replace(hour=PM1_BRIEFING_WAIT[0], minute=PM1_BRIEFING_WAIT[1])
+        if briefing is None and rnd == 1 and not free:   # 35절 Q33 · 44절: 묶음이 늦는 날 16:50 (아침 07:25)까지 2 ~ 3분마다 다시 본다
+            until = end.replace(hour=r1_wait[0], minute=r1_wait[1])
             while briefing is None and datetime.now(config.KST) + timedelta(seconds=BRIEFING_POLL_SEC) <= until:
                 log(f"묶음 기다림 ({until:%H:%M}까지, {BRIEFING_POLL_SEC}초 뒤 다시)")
                 time.sleep(BRIEFING_POLL_SEC)
@@ -1784,7 +1824,7 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
             if briefing is not None:
                 items = load_summaries(start, min(end, datetime.now(config.KST)))
         made = (old or {}).get("createdAt")
-        if old and old.get("status") == "ready" and old.get("round") == 1 and made and made >= start.replace(hour=12):
+        if old and old.get("status") == "ready" and old.get("round") == 1 and made and made >= end.replace(hour=12 if slot == "pm" else 0):
             new = [it for it in items if it.get("createdAt") and it["createdAt"] > made]
             got = briefing is not None and not old.get("briefing")
             if not new and not got:   # 2차: 1차 뒤 새 영상도 새 묶음도 없으면 요청을 쓰지 않고 1차 글을 그대로 둔다
@@ -1793,7 +1833,8 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
             log(f"1차 뒤 새 영상 {len(new)}개" + (" · 1차에 없던 묶음 생김" if got else ""))
         log(f"재료 영상 {len(items)}개, 묶음 {'있음' if briefing else '없음'}")
         doc["briefing"] = f"{day}-{slot}" if briefing else None
-        doc.update(story_compose(day, slot, items, briefing, model, log, deadline=None if free else end))
+        doc.update(story_compose(day, slot, items, briefing, model, log, deadline=None if free else end,
+                                 budget=STORY_BUDGETS.get((slot, rnd), STORY_BUDGET)))
         if not free and datetime.now(config.KST) > end:
             raise Skip("마감 넘김")
         doc["status"] = status
@@ -1825,7 +1866,7 @@ def main():
     ap.add_argument("--dry", action="store_true", help="columns에 저장하지 않고 결과만 낸다 (Actions에서는 시험 결과에)")
     ap.add_argument("--story", action="store_true", help="--dry와 같음 (11-17 시험 모드 이름, 워크플로 입력 호환)")
     ap.add_argument("--model", help=f"쓸 모델 (기본 {STORY_MODEL}, NVIDIA는 nvidia:z-ai/glm-5.3)")
-    ap.add_argument("--round", type=int, choices=[1, 2], help="저녁 편 1차(16:55 마감) · 2차(20:40 마감). 기본: 18시 전이면 1차")
+    ap.add_argument("--round", type=int, choices=[1, 2], help="1차 (아침 07:40 · 저녁 16:55 마감) · 2차 (아침 08:30 · 저녁 20:40 마감). 기본: 아침 07:50 · 저녁 18시 전이면 1차")
     a = ap.parse_args()
     now = datetime.now(config.KST)
     slot = a.slot if a.slot != "auto" else ("am" if now.hour < 12 else "pm")

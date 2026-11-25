@@ -38,8 +38,13 @@ on:
         type: boolean
         default: false
       model:
-        description: "쓸 모델 (비우면 gemini-4-hydrogen, NVIDIA는 nvidia:z-ai/glm-5.3)"
+        description: "쓸 모델 (비우면 gemini-4-hydrogen · 막히면 3.6 Flash, NVIDIA는 nvidia:z-ai/glm-5.3)"
         type: string
+        default: ""
+      round:
+        description: "몇 차 (1 = 아침 07:40 · 저녁 16:55 마감 재료, 2 = 08:30 · 20:40). 비우면 지금 시각으로"
+        type: choice
+        options: ["", "1", "2"]
         default: ""
       scheduled:
         description: "바깥 예약기용 (사람은 끄고 쓴다)"
@@ -77,6 +82,7 @@ jobs:
           [ "$DRY" = "true" ] && args="$args --dry"
           [ "$STORY" = "true" ] && args="$args --story"
           [ -n "$MODEL" ] && args="$args --model $MODEL"
+          [ -n "$ROUND" ] && args="$args --round $ROUND"
           echo "python commentary.py $args"
           python commentary.py $args
         env:
@@ -87,6 +93,7 @@ jobs:
           DRY: ${{ inputs.dry }}
           STORY: ${{ inputs.story }}
           MODEL: ${{ inputs.model }}
+          ROUND: ${{ inputs.round }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}   # 없어도 됨 (없으면 기본 키만)
