@@ -34,7 +34,7 @@ jobs:
           fi
           sed -i "s/__OWNER_UID__/${{ vars.OWNER_UID }}/g" firestore.rules storage.rules
 
-      # functions/(지금 수집 함수)는 권한이 많이 필요해 여기서 배포하지 않는다. README의 로컬 배포 절차 참고.
+      # functions/(지금 수집 함수)는 권한이 많이 필요해 여기서 배포하지 않는다. 로컬 배포 절차는 비공개 문서(News-doc 수집기-설정-운영.md 4단계).
       - name: 서비스 계정 키 파일 만들기
         run: printf '%s' "$SA_JSON" > "$RUNNER_TEMP/sa.json"
         env:
