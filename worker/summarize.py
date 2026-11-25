@@ -108,8 +108,10 @@ JSON 객체 하나로만 답합니다:
   · opinion 줄은 누가 말했는지 앞에 붙인다. 한국인 · 외국인 모두 **개인 이름 없이 "회사명 직함 발언 :"**
     ("신한투자증권 팀장 발언 : 변동성 지속 예상", "펀드스트랫 대표 발언 : 연말 랠리 예상").
     회사명은 한국어 표기 (모건스탠리 · 골드만삭스 · 펀드스트랫). 이름만 알고 회사를 모르면 회사를 모르는 것이다.
-  · 말한 사람의 회사를 자막에서 알 수 없으면 (진행자 · 패널 구분이 안 되거나 소속이 안 나오면)
-    그 opinion 줄은 **넣지 않는다**. "진행자 발언 :" "출연자 발언 :" "방송 의견" 같은 접두는 쓰지 않는다.
+  · 말한 사람의 회사를 자막에서 알 수 없으면 (진행자 · 패널 구분이 안 되거나 소속이 안 나오면):
+    외국 방송(영어 등)은 그 opinion 줄을 **넣지 않는다**.
+    한국어 방송은 빼지 않고 역할로 적는다 ("진행자 발언 :" · "출연자 발언 :", 역할도 모르면 접두 없이). 채널 이름은 나중에 붙인다.
+    "방송 의견" 같은 접두는 쓰지 않는다.
   · 발언자가 추정 · 예상 · 어림으로 말한 숫자는 **그 말투를 살린다**. like · around · or so · about · roughly → "약" · "안팎",
     looks like · expect · could · I think → "~로 봄" · "~ 예상" (예: "2분기 약 145%", "4분기는 25% 안팎으로 더 느려질 것으로 봄").
   · 아직 발표되지 않은 기간(앞으로의 분기 · 연도)의 숫자는 반드시 "~ 예상" · "~로 봄"으로 쓴다. "둔화" · "기록" · "증가" 같은 확정된 일의 말로 끝내지 않는다.
@@ -193,8 +195,9 @@ SOURCE_HEAD = re.compile(r"^(.{1,40}?)\s*(발언|발표|의견)\s*:\s*")
 ROLE_ONLY = re.compile(r"^(진행자|앵커|사회자|출연자|출연진|패널|게스트|기자|전문가|애널리스트|방송|해설자|발언자)$")
 
 
-def _line_kind(x, kind):
+def _line_kind(x, kind, ko_channel=None):
     """요약 줄 하나 → (고친 줄, "fact" | "opinion"). 의견인데 누가 말했는지 모르면 ("", kind) — 그 줄은 뺀다 (46절).
+    한국어 방송(ko_channel = 채널 이름)은 빼지 않고 채널 이름을 붙인다 ("한국경제TV 진행자 발언 : …", 사용자 11-26)
     kind가 없는 옛 꼴 답(문자열 줄)은 "누구 발언 :" 접두가 있으면 의견, 없으면 사실로 본다"""
     m = SOURCE_HEAD.match(x)
     who = m.group(1).strip() if m else ""
@@ -205,11 +208,21 @@ def _line_kind(x, kind):
             x = x[m.end():]
         return x, kind
     if not m or ROLE_ONLY.match(who):
-        return "", kind
+        if not ko_channel:
+            return "", kind
+        role = f" {who}" if m and who not in ("방송", "발언자") else ""
+        return f"{ko_channel}{role} 발언 : {x[m.end():] if m else x}", kind
     return x, kind
 
 
-def _normalize(raw):
+def _korean(text):
+    """자막이 한국어인가: 앞부분 글자 중 한글이 절반 넘으면"""
+    head = text[:3000]
+    letters = sum(c.isalpha() for c in head)
+    return letters > 0 and sum("가" <= c <= "힣" for c in head) * 2 > letters
+
+
+def _normalize(raw, ko_channel=None):
     """모델 응답을 틀에 맞게 다듬는다. 분류 · 방향 · 놀람 · 범위 · 기간은 허용값만 남긴다."""
     if not isinstance(raw, dict):
         raise SummarizeError("Gemini 답이 정해진 틀(JSON 객체)이 아님")
@@ -239,7 +252,7 @@ def _normalize(raw):
         for x in xs if isinstance(xs, list) else []:
             kind = x.get("kind") if isinstance(x, dict) else None
             x = clean(x.get("text", "") if isinstance(x, dict) else x)
-            x, kind = _line_kind(x, kind)
+            x, kind = _line_kind(x, kind, ko_channel)
             if x and x != note and x not in out:
                 out.append(_cut(x))
                 kinds.append(kind)
@@ -457,7 +470,8 @@ def summarize(title, channel, text, log=print):
     body = text[:MAX_CHARS]
     content = f"{PROMPT}\n\n제목: {title}\n채널: {channel}\n\n자막:\n{body}"
     try:
-        data = _normalize(llm.generate_json(content, log=log, what="요약"))
+        ko_channel = " ".join(str(channel or "").split()) if _korean(body) else None
+        data = _normalize(llm.generate_json(content, log=log, what="요약"), ko_channel)
     except llm.LLMError as e:
         raise SummarizeError(str(e)) from e
     check_lines(data, body, log=log)
