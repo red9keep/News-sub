@@ -201,7 +201,7 @@ def _line_kind(x, kind):
     if kind not in LINE_KINDS:
         kind = "opinion" if m and m.group(2) != "발표" else "fact"
     if kind == "fact":
-        if m and ROLE_ONLY.match(who):   # "진행자 발언 : 코스피 5000 이탈" → 출처 없이
+        if m and m.group(2) != "발표":   # "진행자 · CNBC 기자 발언 : 코스피 5000 이탈" → 출처 없이 (발표만 남김)
             x = x[m.end():]
         return x, kind
     if not m or ROLE_ONLY.match(who):
