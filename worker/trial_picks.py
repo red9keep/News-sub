@@ -89,8 +89,8 @@ def main():
             rep.line(f"  (저장됨) # {nb.get('what')} = {nb.get('value')} ({nb.get('period')})")
         for i in data["issues"]:   # 이슈별 요약 줄 (11-05, 블로그 팝업용) 확인
             rep.line(f"  ■ {i['category']} [{i['topic']}] {i['note'][:60]}")
-            for ln in i["lines"]:
-                rep.line(f"    · {ln} ({len(ln)}자)")
+            for ln, kind in zip(i["lines"], i["line_kinds"]):
+                rep.line(f"    · {ln} ({'의견' if kind == 'opinion' else '사실'}, {len(ln)}자)")
         for nb in data["numbers"]:
             rep.line(f"  # {nb['what']} = {nb['value']} ({nb['period']})")
         for p in picks:
@@ -99,7 +99,7 @@ def main():
             md.append(f"| {ch} | {title[:30]} | {summarize.ACTION_KO[p['action']]} | {p['name']} {p['ticker']} | {price} "
                       f"| {p['speaker']}{' (리포트)' if p['source'] == 'report' else ''} | {p['reason']} |")
         out.append({"id": vid, "channel": ch, "title": title, "before": before, "picks": picks,
-                    "issues": [{"topic": i["topic"], "note": i["note"], "lines": i["lines"]} for i in data["issues"]]})
+                    "issues": [{"topic": i["topic"], "note": i["note"], "lines": i["lines"], "line_kinds": i["line_kinds"]} for i in data["issues"]]})
         if args.save and s:
             store.set_summary_fields(vid, picks=picks)
             store.save_picks(vid, picks, s)

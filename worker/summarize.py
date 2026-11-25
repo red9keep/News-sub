@@ -70,7 +70,7 @@ JSON 객체 하나로만 답합니다:
       "country": "이슈의 주된 국가 (ISO 2자리: US, CN, JP, KR, EU 등. 특정 국가가 아니면 비움)",
       "horizon": "days | weeks | months  (영향이 이어질 기간, 발언 기준)",
       "note": "이 이슈에 대한 영상의 주장 한 문장 (한국어)",
-      "lines": ["이 이슈에서 영상이 말한 내용을 한 줄에 하나씩, 최대 5줄 (한국어, 아래 '요약 줄' 규칙 참고)"]
+      "lines": [{"kind": "fact | opinion", "text": "이 이슈에서 영상이 말한 내용 한 줄 (한국어, 아래 '요약 줄' 규칙 참고)"}]  (최대 5줄)
     }
   ],
   "tickers": ["영상에서 언급된 모든 종목 · ETF 심볼 (미국 상장 기준, 예: NVDA, SMH, SPY)"],
@@ -101,8 +101,14 @@ JSON 객체 하나로만 답합니다:
 - 요약 줄(lines)은 그 이슈에서 영상이 말한 내용을 줄마다 하나씩, 최대 5줄 (블로그 팝업에 그대로 보인다).
   · 한 줄 = 한 가지 내용. **명사형**으로 끝낸다 (발표 · 인상 · 기록 · 예정 · 감소 …). "-다" "-요" "-습니다"로 끝내지 않는다.
     마침표 없음. "—"를 쓰지 않는다. 한 줄 70자 안.
-  · 숫자 · 사건 · 누가 무엇을 했는지는 그대로 적는다. **전망 · 평가 · 추천은 누가 말했는지 앞에 붙인다**
-    ("톰 리 발언 : 연말 랠리 예상"처럼. 발언자를 모르면 "진행자 발언 :"). 방송은 의견이 많아 기사와 달리 이 표시가 필요하다.
+  · 줄마다 kind를 정한다. fact = 일어난 일 · 숫자 · 발표 · 시장 상황 (진행자 · 앵커가 전한 시장 상황도 fact).
+    opinion = 전망 · 평가 · 추천 · 종목 꼽기.
+  · fact 줄은 출처를 붙이지 않는다 ("진행자 발언 :" 같은 접두 없이). 기관 · 회사의 공식 발표만
+    "한국은행 발표 : 기준금리 동결"처럼 기관을 앞에 붙인다.
+  · opinion 줄은 누가 말했는지 앞에 붙인다. 한국인은 **개인 이름 없이 "회사명 직함 발언 :"**
+    ("신한투자증권 팀장 발언 : 변동성 지속 예상"). 외국인은 이름으로 ("톰 리 발언 : 연말 랠리 예상").
+  · 말한 사람의 회사(외국인은 이름)를 자막에서 알 수 없으면 (진행자 · 패널 구분이 안 되거나 소속이 안 나오면)
+    그 opinion 줄은 **넣지 않는다**. "진행자 발언 :" "출연자 발언 :" "방송 의견" 같은 접두는 쓰지 않는다.
   · 발언자가 추정 · 예상 · 어림으로 말한 숫자는 **그 말투를 살린다**. like · around · or so · about · roughly → "약" · "안팎",
     looks like · expect · could · I think → "~로 봄" · "~ 예상" (예: "2분기 약 145%", "4분기는 25% 안팎으로 더 느려질 것으로 봄").
   · 아직 발표되지 않은 기간(앞으로의 분기 · 연도)의 숫자는 반드시 "~ 예상" · "~로 봄"으로 쓴다. "둔화" · "기록" · "증가" 같은 확정된 일의 말로 끝내지 않는다.
@@ -179,6 +185,29 @@ def _cut(x):
     return _trim(head, MAX_LINE_CHARS - len(tag)) + tag
 
 
+LINE_KINDS = ("fact", "opinion")
+# 줄 앞 출처 "누구 발언 :" "기관 발표 :" (콜론 앞뒤 띄어쓰기는 모델마다 다름)
+SOURCE_HEAD = re.compile(r"^(.{1,40}?)\s*(발언|발표|의견)\s*:\s*")
+# 누구인지 알 수 없는 출처: 사실이면 떼고, 의견이면 줄을 뺀다 (46절 — 회사를 모르면 넣지 않음)
+ROLE_ONLY = re.compile(r"^(진행자|앵커|사회자|출연자|출연진|패널|게스트|기자|전문가|애널리스트|방송|해설자|발언자)$")
+
+
+def _line_kind(x, kind):
+    """요약 줄 하나 → (고친 줄, "fact" | "opinion"). 의견인데 누가 말했는지 모르면 ("", kind) — 그 줄은 뺀다 (46절).
+    kind가 없는 옛 꼴 답(문자열 줄)은 "누구 발언 :" 접두가 있으면 의견, 없으면 사실로 본다"""
+    m = SOURCE_HEAD.match(x)
+    who = m.group(1).strip() if m else ""
+    if kind not in LINE_KINDS:
+        kind = "opinion" if m and m.group(2) != "발표" else "fact"
+    if kind == "fact":
+        if m and ROLE_ONLY.match(who):   # "진행자 발언 : 코스피 5000 이탈" → 출처 없이
+            x = x[m.end():]
+        return x, kind
+    if not m or ROLE_ONLY.match(who):
+        return "", kind
+    return x, kind
+
+
 def _normalize(raw):
     """모델 응답을 틀에 맞게 다듬는다. 분류 · 방향 · 놀람 · 범위 · 기간은 허용값만 남긴다."""
     if not isinstance(raw, dict):
@@ -201,15 +230,19 @@ def _normalize(raw):
         return out[:10]
 
     def lines(xs, note):
-        """요약 줄: 문자열만, 공백 정리, 마침표 · 줄표 제거, 70자 안, note와 같은 줄 · 중복 제거, 최대 5줄"""
+        """요약 줄 → (줄, 사실 · 의견). 공백 정리, 마침표 · 줄표 제거, 70자 안, note와 같은 줄 · 중복 제거,
+        출처 규칙(_line_kind), 최대 5줄"""
         def clean(x):
             return " ".join(str(x).split()).replace("—", "·").strip(" .。")
-        out, note = [], clean(note)
+        out, kinds, note = [], [], clean(note)
         for x in xs if isinstance(xs, list) else []:
-            x = clean(x)
+            kind = x.get("kind") if isinstance(x, dict) else None
+            x = clean(x.get("text", "") if isinstance(x, dict) else x)
+            x, kind = _line_kind(x, kind)
             if x and x != note and x not in out:
                 out.append(_cut(x))
-        return out[:MAX_LINES]
+                kinds.append(kind)
+        return out[:MAX_LINES], kinds[:MAX_LINES]
 
     issues = []
     for it in (raw.get("issues") or [])[:4]:
@@ -218,6 +251,7 @@ def _normalize(raw):
         cat = str(it.get("category", "")).strip().upper()
         country = str(it.get("country") or "").strip().upper()
         note = str(it.get("note", ""))[:300]
+        lns, kinds = lines(it.get("lines"), note)
         issues.append({
             "category": cat if cat in CATEGORIES else "OTHER",
             "topic": str(it.get("topic") or "").strip()[:60],
@@ -228,7 +262,8 @@ def _normalize(raw):
             "country": country if len(country) <= 3 else "",
             "horizon": it.get("horizon") if it.get("horizon") in HORIZONS else "weeks",
             "note": note,
-            "lines": lines(it.get("lines"), note),   # 블로그 뉴스 팝업용 요약 줄 (11-05)
+            "lines": lns,          # 블로그 뉴스 팝업용 요약 줄 (11-05)
+            "line_kinds": kinds,   # lines 와 같은 길이, 줄마다 "fact" | "opinion" (시황 해설 요청 46절)
         })
     picks, seen = [], set()
     for p in (_pick(x) for x in (raw.get("picks") or [])[:50]):
@@ -394,8 +429,8 @@ def check_lines(data, src, log=print):
     """issues[].lines를 자막과 대조해 고친다 (data를 바로 고침). → (뺀 줄 수, 말투 바로잡은 줄 수)"""
     have, dropped, fixed = source_numbers(src), 0, 0
     for it in data.get("issues") or []:
-        out = []
-        for ln in it.get("lines") or []:
+        out, kinds = [], []
+        for ln, kind in zip(it.get("lines") or [], it.get("line_kinds") or []):
             bad = num_problem(ln, have)
             if bad:
                 dropped += 1
@@ -409,7 +444,8 @@ def check_lines(data, src, log=print):
                     new = _trim(new[:len(new) - len(tag)], MAX_LINE_CHARS - len(tag)) + tag
                 fixed += 1
             out.append(new)
-        it["lines"] = out
+            kinds.append(kind)
+        it["lines"], it["line_kinds"] = out, kinds
     if dropped or fixed:
         log(f"말투 바로잡음 {fixed}줄 · 숫자 안 맞아 뺀 줄 {dropped}줄")
     return dropped, fixed
@@ -472,7 +508,7 @@ def report_lines(channel, title, data):
     for i in data["issues"]:
         out.append(f"  - {i['category']:<16} {i['stance']:<8} {i['surprise']:<9} {i['scope']:<7} {i['country']:<3} "
                    f"{i['horizon']:<7} [{i['topic']}] {','.join(i['tickers'])}  {i['note'][:50]}")
-        out += [f"      · {ln}" for ln in i["lines"]]
+        out += [f"      · [{'의견' if k == 'opinion' else '사실'}] {ln}" for ln, k in zip(i["lines"], i["line_kinds"])]
     out.append(f"  종목: {', '.join(data['tickers'])}  섹터: {', '.join(data['sectors'])}  키워드: {', '.join(data['keywords'])}")
     out += ["  " + pick_line(p) for p in data["picks"]]
     return out
