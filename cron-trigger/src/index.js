@@ -30,7 +30,9 @@ const SLOTS = [
 // 11-16 멈춤 → 11-19 사용자 결정으로 다시 켬 (새 틀 format story, status는 COMMENTARY_STATUS 비움 = draft-test).
 // 멈출 때는 빈 표로 두고 commentary.yml schedule도 같이 지운다
 // 11-20 (요청 문서 31 · 32절): 저녁 편 1차 16:40 (16:55까지 저장, 블로그 17:00 발행) · 2차 20:30 (rev 올림, 블로그 21:00)
+// 11-25 (요청 문서 43 · 44절): 아침 편 1차 07:10 (07:40까지 저장) · 2차 08:10 (rev 올림, 블로그 08:40). 2차가 안 되면 1차 글이 나간다
 const COMMENTARY = [
+  { at: 7 * 60 + 10, slot: "am" },
   { at: 8 * 60 + 10, slot: "am" },
   { at: 16 * 60 + 40, slot: "pm" },
   { at: 20 * 60 + 30, slot: "pm" },
