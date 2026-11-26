@@ -104,3 +104,6 @@ MAD_MONEY_CAPTION_WAIT_UNTIL = (11, 30)
 # 요약 저장 뒤 블로그 방송 기록 실행 요청 (Q36). 토큰이 없으면 보내지 않는다
 BLOG_DISPATCH_URL = "https://api.github.com/repos/red6keep-droid/alphascope/actions/workflows/media-daily.yml/dispatches"
 BLOG_DISPATCH_TOKEN = os.environ.get("ALPHASCOPE_DISPATCH_TOKEN", "").strip()
+# 시황 글을 ready로 저장한 직후 블로그 시황 발행 실행 요청 (요청 문서 49절 Q43, 11-26). 토큰이 없으면 보내지 않는다
+COMMENTARY_DISPATCH_URL = "https://api.github.com/repos/red6keep-droid/alphascope/actions/workflows/commentary.yml/dispatches"
+COMMENTARY_DISPATCH_TOKEN = os.environ.get("NEWFACT_DISPATCH_TOKEN", "").strip()

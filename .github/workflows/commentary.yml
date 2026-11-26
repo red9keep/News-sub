@@ -98,6 +98,7 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_KEY_BACKUP: ${{ secrets.GEMINI_API_KEY_BACKUP }}   # 없어도 됨 (없으면 기본 키만)
+          NEWFACT_DISPATCH_TOKEN: ${{ secrets.NEWFACT_DISPATCH_TOKEN }}   # ready 저장 뒤 블로그 시황 발행 요청 (요청 문서 49절 Q43). 없으면 안 보냄
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}   # story 시험에서 model=nvidia:z-ai/glm-5.3 일 때만 씀
           STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
           # 다 쓴 글의 status. 비우면 draft-test (블로그가 발행하지 않는 시험 글). ready로 바꾸는 것은 사용자가 글을 보고 정한다

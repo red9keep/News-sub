@@ -159,6 +159,23 @@ def is_mad_money_episode(channel, title):
     return channel == config.MAD_MONEY_CHANNEL and bool(re.match(config.MAD_MONEY_TITLE, title or ""))
 
 
+def commentary_dispatch(day, slot):
+    """블로그 시황 발행 실행(commentary.yml)을 한 번 건다 (요청 문서 49절 Q43). (성공 여부, 한국어 사유).
+    토큰은 어디에도 찍지 않는다. 실패해도 시황 실행은 그대로 · 알림 없음 — 블로그 정시 실행(안전망)이 받는다."""
+    if not config.COMMENTARY_DISPATCH_TOKEN:
+        return False, "토큰(NEWFACT_DISPATCH_TOKEN) 없음"
+    try:
+        r = requests.post(config.COMMENTARY_DISPATCH_URL, timeout=10, json={
+            "ref": "main", "inputs": {"slot": slot, "date": day, "scheduled": "true", "caller": "collector"}},
+            headers={"Authorization": f"Bearer {config.COMMENTARY_DISPATCH_TOKEN}", "Accept": "application/vnd.github+json",
+                     "X-GitHub-Api-Version": "2022-11-28"})
+    except requests.RequestException as e:
+        return False, f"요청 실패 ({type(e).__name__})"
+    if r.status_code == 204:
+        return True, "204"
+    return False, f"응답 {r.status_code}"
+
+
 def blog_dispatch():
     """블로그 방송 기록 실행(media-daily.yml)을 한 번 건다 (요청 문서 39절 Q36). (성공 여부, 한국어 사유).
     토큰은 어디에도 찍지 않는다. 실패해도 수집은 그대로 — 블로그는 11:50 예비 확인으로 받는다."""

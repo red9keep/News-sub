@@ -1853,6 +1853,10 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
         out(json.dumps(doc, ensure_ascii=False, indent=2, default=str))
         return doc
     save(key, doc, log)
+    if doc["status"] == "ready":   # 49절 Q43: 저장 직후 블로그 발행 부르기. skip · draft-test는 부르지 않음
+        import notify
+        ok, why = notify.commentary_dispatch(day, slot)
+        log(f"블로그 시황 발행 부름: {'됨' if ok else '안 됨'} ({why})")
     return doc
 
 
