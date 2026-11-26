@@ -1828,8 +1828,13 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
             new = [it for it in items if it.get("createdAt") and it["createdAt"] > made]
             got = briefing is not None and not old.get("briefing")
             if not new and not got:   # 2차: 1차 뒤 새 영상도 새 묶음도 없으면 요청을 쓰지 않고 1차 글을 그대로 둔다
-                log("1차 뒤 새 영상 · 새 묶음 없음 → 1차 글 그대로 (rev 그대로)")
-                return None
+                # 51절 (사용자 11-26): 그 1차 글이 그날 완성본 → 내용은 그대로 round 2로 고쳐 저장(rev +1, AI 0)하고 블로그를 부른다
+                log("1차 뒤 새 영상 · 새 묶음 없음 → 1차 글 그대로, round 2로 저장")
+                same = {k: v for k, v in old.items() if k not in ("rev", "createdAt")}
+                same["round"] = 2
+                save(key, same, log)
+                _dispatch(day, slot, log)
+                return same
             log(f"1차 뒤 새 영상 {len(new)}개" + (" · 1차에 없던 묶음 생김" if got else ""))
         log(f"재료 영상 {len(items)}개, 묶음 {'있음' if briefing else '없음'}")
         doc["briefing"] = f"{day}-{slot}" if briefing else None
@@ -1854,10 +1859,15 @@ def run(day, slot, status, force=False, dry=False, log=print, out=print, model=N
         return doc
     save(key, doc, log)
     if doc["status"] == "ready":   # 49절 Q43: 저장 직후 블로그 발행 부르기. skip · draft-test는 부르지 않음
-        import notify
-        ok, why = notify.commentary_dispatch(day, slot)
-        log(f"블로그 시황 발행 부름: {'됨' if ok else '안 됨'} ({why})")
+        _dispatch(day, slot, log)
     return doc
+
+
+def _dispatch(day, slot, log):
+    """블로그 시황 발행 부르기 (49절 Q43). 실패해도 실행은 그대로 · 알림 없음"""
+    import notify
+    ok, why = notify.commentary_dispatch(day, slot)
+    log(f"블로그 시황 발행 부름: {'됨' if ok else '안 됨'} ({why})")
 
 
 def main():

@@ -70,7 +70,7 @@ JSON 객체 하나로만 답합니다:
       "country": "이슈의 주된 국가 (ISO 2자리: US, CN, JP, KR, EU 등. 특정 국가가 아니면 비움)",
       "horizon": "days | weeks | months  (영향이 이어질 기간, 발언 기준)",
       "note": "이 이슈에 대한 영상의 주장 한 문장 (한국어)",
-      "lines": [{"kind": "fact | opinion", "text": "이 이슈에서 영상이 말한 내용 한 줄 (한국어, 아래 '요약 줄' 규칙 참고)"}]  (최대 5줄)
+      "lines": [{"kind": "fact | opinion", "org": "opinion이면 말한 사람의 회사 · 기관 (한국어 표기, 사람 이름 금지, 모르면 빈 문자열)", "title": "opinion이면 직함 · 역할 (팀장 · 애널리스트 · CEO · 진행자 등, 사람 이름 금지)", "text": "이 이슈에서 영상이 말한 내용 한 줄 (한국어, 출처 접두 없이, 아래 '요약 줄' 규칙 참고)"}]  (최대 5줄)
     }
   ],
   "tickers": ["영상에서 언급된 모든 종목 · ETF 심볼 (미국 상장 기준, 예: NVDA, SMH, SPY)"],
@@ -105,12 +105,15 @@ JSON 객체 하나로만 답합니다:
     opinion = 전망 · 평가 · 추천 · 종목 꼽기.
   · fact 줄은 출처를 붙이지 않는다 ("진행자 발언 :" 같은 접두 없이). 기관 · 회사의 공식 발표만
     "한국은행 발표 : 기준금리 동결"처럼 기관을 앞에 붙인다.
-  · opinion 줄은 누가 말했는지 앞에 붙인다. 한국인 · 외국인 모두 **개인 이름 없이 "회사명 직함 발언 :"**
-    ("신한투자증권 팀장 발언 : 변동성 지속 예상", "펀드스트랫 대표 발언 : 연말 랠리 예상").
-    회사명은 한국어 표기 (모건스탠리 · 골드만삭스 · 펀드스트랫). 이름만 알고 회사를 모르면 회사를 모르는 것이다.
+  · opinion 줄은 누가 말했는지를 text가 아니라 **org(회사) · title(직함)** 칸에 적는다. 블로그에는 "org title 발언 : text"로 보인다
+    (org "신한투자증권" · title "팀장" → "신한투자증권 팀장 발언 : 변동성 지속 예상"). 한국인 · 외국인 모두 같다.
+    **회사명은 반드시 있어야 하고, 사람 이름은 어느 칸에도 절대 쓰지 않는다.** 회사명은 한국어 표기 (모건스탠리 · 골드만삭스 · 펀드스트랫).
+    틀림 → 맞음: org "" · title "김태성 본부장" → 회사를 모르므로 아래 규칙, org "SK증권 최영지" → org "SK증권" · title "PV",
+    org "웨드부시 댄 아이브스" → org "웨드부시" · title "애널리스트", org "일론 머스크" → org "테슬라" · title "CEO".
+    이름만 알고 회사를 모르면 회사를 모르는 것이다.
   · 말한 사람의 회사를 자막에서 알 수 없으면 (진행자 · 패널 구분이 안 되거나 소속이 안 나오면):
     외국 방송(영어 등)은 그 opinion 줄을 **넣지 않는다**.
-    한국어 방송은 빼지 않고 역할로 적는다 ("진행자 발언 :" · "출연자 발언 :", 역할도 모르면 접두 없이). 채널 이름은 나중에 붙인다.
+    한국어 방송은 빼지 않고 org를 비우고 title에 역할만 적는다 ("진행자" · "출연자", 역할도 모르면 비움). 채널 이름은 나중에 붙인다.
     "방송 의견" 같은 접두는 쓰지 않는다.
   · 발언자가 추정 · 예상 · 어림으로 말한 숫자는 **그 말투를 살린다**. like · around · or so · about · roughly → "약" · "안팎",
     looks like · expect · could · I think → "~로 봄" · "~ 예상" (예: "2분기 약 145%", "4분기는 25% 안팎으로 더 느려질 것으로 봄").
@@ -191,11 +194,77 @@ def _cut(x):
 LINE_KINDS = ("fact", "opinion")
 # 줄 앞 출처 "누구 발언 :" "기관 발표 :" (콜론 앞뒤 띄어쓰기는 모델마다 다름)
 SOURCE_HEAD = re.compile(r"^(.{1,40}?)\s*(발언|발표|의견)\s*:\s*")
-# 누구인지 알 수 없는 출처: 사실이면 떼고, 의견이면 줄을 뺀다 (46절 — 회사를 모르면 넣지 않음)
-ROLE_ONLY = re.compile(r"^(진행자|앵커|사회자|출연자|출연진|패널|게스트|기자|전문가|애널리스트|방송|해설자|발언자)$")
 
 
-def _line_kind(x, kind, ko_channel=None):
+# 접두에서 회사가 아닌 말: 직함 · 역할 (끝이 이것이면 직함). 51절 — 이것만 남으면 회사가 없는 것 (사용자 11-26)
+TITLE_ENDS = ("이사", "본부장", "대표", "위원", "연구원", "애널리스트", "센터장", "팀장", "장관", "의원", "회장", "부장", "전략가",
+              "교수", "총재", "의장", "사장", "상무", "전무", "실장", "기자", "앵커", "위원장", "매니저", "고문", "차장", "과장",
+              "이코노미스트", "캐스터", "진행자", "사회자", "출연자", "출연진", "패널", "게스트", "전문가", "해설자", "발언자",
+              "관계자", "주지사", "창업자", "프로듀서", "PV", "PB", "CEO", "CFO", "CIO", "COO", "CTO", "방송")
+TITLE_MODS = {"전", "현", "수석", "최고", "선임", "책임", "공동", "부"}
+
+
+# 한국 사람 이름 판단 (commentary.korean_person 과 같은 글자 표)
+KR_SURNAME = set("김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허유남심노하곽성차주우구민진나지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용예봉경사부가복태목형피두감음빈동온호범좌팽승간상갈단견당화창")
+FOREIGN_SYL = set("스크트드프브즈츠르슈엘벨롬턴슨클켈샤셀젠잭펠")   # 외국 이름을 한글로 옮길 때 나오고 한국 이름에는 거의 없는 글자
+ORG_TAIL = ("증권", "투자", "운용", "은행", "리서치", "연구소", "센터", "경제", "방송", "캐피탈", "캐피털", "그룹", "금융",
+            "파트너스", "자산", "생명", "화재", "협회", "거래소", "TV", "tv")
+
+
+def _korean_name(t):
+    """'김태성'처럼 성 + 두 글자 한글 (외국 이름 글자 · 회사 끝말 없음)"""
+    return (bool(re.fullmatch(r"[가-힣]{3}", t)) and t[0] in KR_SURNAME and not (set(t) & FOREIGN_SYL)
+            and not t.endswith(ORG_TAIL))
+
+
+def _is_title(t):
+    """직함 · 역할 낱말인가. 끝이 같아도 길면 회사다 ('수석연구원'은 직함, '자본시장연구원'은 회사)"""
+    return t in TITLE_MODS or any(t.endswith(e) and len(t) <= len(e) + 2 for e in TITLE_ENDS)
+
+
+def speaker_names(raw):
+    """요약 답의 speakers · picks[].speaker '이름 (소속)' → {이름: 소속}. 접두에 남은 사람 이름을 찾는 데 쓴다 (51절)"""
+    out = {}
+    xs = list(raw.get("speakers") or []) + [p.get("speaker") for p in raw.get("picks") or [] if isinstance(p, dict)]
+    for x in xs:
+        m = re.match(r"^\s*([^()]+?)\s*(?:\(([^()]*)\))?\s*$", str(x or ""))
+        if not m:
+            continue
+        aff = (m.group(2) or "").strip()
+        name = " ".join(t for t in m.group(1).split() if not _is_title(t))   # '김창호 애널리스트' → '김창호'
+        if len(name) < 2 or name.endswith(ORG_TAIL) or name.endswith("은행"):   # '한국은행' · 'IPK증권'은 사람이 아님
+            continue
+        if aff or _korean_name(name):   # 괄호 소속이 없으면 한국 이름 모양일 때만 사람으로 본다
+            out.setdefault(name, aff)
+    return out
+
+
+def _who(who, names, ko_channel):
+    """의견 줄 출처 → '회사명 직함' (사람 이름 없이). 회사를 모르면 한국어 방송은 '채널 이름 역할', 외국 방송은 "" (줄을 뺌). 51절"""
+    toks = who.split()
+    for name, aff in names.items():   # 1) speakers에 있는 이름을 지우고, 회사가 안 남으면 그 사람의 소속으로
+        n = name.split()
+        for i in range(len(toks) - len(n) + 1):
+            if toks[i:i + len(n)] == n:
+                toks = toks[:i] + toks[i + len(n):]
+                if all(_is_title(t) for t in toks) and aff and not all(_is_title(t) for t in aff.split()):
+                    # 소속에 직함이 없으면 원래 직함을 뒤에 ('문서진 대표' + 'IBK투자증권' → 'IBK투자증권 대표')
+                    toks = aff.split() + ([] if any(_is_title(t) for t in aff.split()) else toks)
+                break
+    # speakers에 없는 한국 이름: 직함 바로 앞의 '성 + 두 글자' ('이동근 대표' → '대표')
+    toks = [t for i, t in enumerate(toks) if not (_korean_name(t) and i + 1 < len(toks) and _is_title(toks[i + 1]))]
+    titled = [i for i, t in enumerate(toks) if _is_title(t) and t not in TITLE_MODS]
+    if titled and titled[-1] < len(toks) - 1 and titled[-1] > 0:   # 2) '제프리스 애널리스트 제임스 크롬비' → 직함 뒤 이름을 자름
+        toks = toks[:titled[-1] + 1]
+    if toks and not all(_is_title(t) for t in toks):
+        return " ".join(toks)
+    if not ko_channel:   # 3) 직함 · 역할만 남음 = 회사 모름
+        return ""
+    role = "진행자" if any(t.endswith(("진행자", "앵커", "캐스터", "사회자")) for t in who.split()) else "출연자"
+    return f"{ko_channel} {role}"
+
+
+def _line_kind(x, kind, ko_channel=None, names=None):
     """요약 줄 하나 → (고친 줄, "fact" | "opinion"). 의견인데 누가 말했는지 모르면 ("", kind) — 그 줄은 뺀다 (46절).
     한국어 방송(ko_channel = 채널 이름)은 빼지 않고 채널 이름을 붙인다 ("한국경제TV 진행자 발언 : …", 사용자 11-26)
     kind가 없는 옛 꼴 답(문자열 줄)은 "누구 발언 :" 접두가 있으면 의견, 없으면 사실로 본다"""
@@ -207,12 +276,12 @@ def _line_kind(x, kind, ko_channel=None):
         if m and m.group(2) != "발표":   # "진행자 · CNBC 기자 발언 : 코스피 5000 이탈" → 출처 없이 (발표만 남김)
             x = x[m.end():]
         return x, kind
-    if not m or ROLE_ONLY.match(who):
-        if not ko_channel:
-            return "", kind
-        role = f" {who}" if m and who not in ("방송", "발언자") else ""
-        return f"{ko_channel}{role} 발언 : {x[m.end():] if m else x}", kind
-    return x, kind
+    if not m:
+        return (f"{ko_channel} 발언 : {x}" if ko_channel else ""), kind
+    if ko_channel and who.startswith(ko_channel):   # 이미 채널 이름을 붙인 줄
+        return x, kind
+    new = _who(who, names or {}, ko_channel)
+    return (f"{new} 발언 : {x[m.end():]}" if new else ""), kind
 
 
 def _korean(text):
@@ -251,13 +320,17 @@ def _normalize(raw, ko_channel=None):
         out, kinds, note = [], [], clean(note)
         for x in xs if isinstance(xs, list) else []:
             kind = x.get("kind") if isinstance(x, dict) else None
-            x = clean(x.get("text", "") if isinstance(x, dict) else x)
-            x, kind = _line_kind(x, kind, ko_channel)
+            if isinstance(x, dict):   # 51절: 의견 출처는 org · title 칸 → "org title 발언 : text" (사람 이름 칸이 없게)
+                text, who = clean(x.get("text", "")), " ".join(f"{x.get('org') or ''} {x.get('title') or ''}".split())
+                x = f"{who} 발언 : {text}" if kind == "opinion" and who and text and not SOURCE_HEAD.match(text) else text
+            x = clean(x)
+            x, kind = _line_kind(x, kind, ko_channel, names)
             if x and x != note and x not in out:
                 out.append(_cut(x))
                 kinds.append(kind)
         return out[:MAX_LINES], kinds[:MAX_LINES]
 
+    names = speaker_names(raw)
     issues = []
     for it in (raw.get("issues") or [])[:4]:
         if not isinstance(it, dict):
