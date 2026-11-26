@@ -70,7 +70,7 @@ JSON 객체 하나로만 답합니다:
       "country": "이슈의 주된 국가 (ISO 2자리: US, CN, JP, KR, EU 등. 특정 국가가 아니면 비움)",
       "horizon": "days | weeks | months  (영향이 이어질 기간, 발언 기준)",
       "note": "이 이슈에 대한 영상의 주장 한 문장 (한국어)",
-      "lines": [{"kind": "fact | opinion", "org": "opinion이면 말한 사람의 회사 · 기관 (한국어 표기, 사람 이름 금지, 모르면 빈 문자열)", "title": "opinion이면 직함 · 역할 (팀장 · 애널리스트 · CEO · 진행자 등, 사람 이름 금지)", "text": "이 이슈에서 영상이 말한 내용 한 줄 (한국어, 출처 접두 없이, 아래 '요약 줄' 규칙 참고)"}]  (최대 5줄)
+      "lines": [{"kind": "fact | opinion", "org": "opinion이면 말한 사람의 회사 · 기관 (한국어 표기, 사람 이름 금지, 모르면 빈 문자열)", "title": "opinion이면 직함 · 역할 (팀장 · 애널리스트 · CEO · 진행자 등, 사람 이름 금지)", "name": "opinion을 말한 사람이 외국인이면 이름 (한국어 표기, 예: 일론 머스크). 한국인이면 반드시 빈 문자열", "text": "이 이슈에서 영상이 말한 내용 한 줄 (한국어, 출처 접두 없이, 아래 '요약 줄' 규칙 참고)"}]  (최대 5줄)
     }
   ],
   "tickers": ["영상에서 언급된 모든 종목 · ETF 심볼 (미국 상장 기준, 예: NVDA, SMH, SPY)"],
@@ -105,14 +105,15 @@ JSON 객체 하나로만 답합니다:
     opinion = 전망 · 평가 · 추천 · 종목 꼽기.
   · fact 줄은 출처를 붙이지 않는다 ("진행자 발언 :" 같은 접두 없이). 기관 · 회사의 공식 발표만
     "한국은행 발표 : 기준금리 동결"처럼 기관을 앞에 붙인다.
-  · opinion 줄은 누가 말했는지를 text가 아니라 **org(회사) · title(직함)** 칸에 적는다. 블로그에는 "org title 발언 : text"로 보인다
-    (org "신한투자증권" · title "팀장" → "신한투자증권 팀장 발언 : 변동성 지속 예상"). 한국인 · 외국인 모두 같다.
-    **회사명은 반드시 있어야 하고, 사람 이름은 어느 칸에도 절대 쓰지 않는다.** 회사명은 한국어 표기 (모건스탠리 · 골드만삭스 · 펀드스트랫).
-    틀림 → 맞음: org "" · title "김태성 본부장" → 회사를 모르므로 아래 규칙, org "SK증권 최영지" → org "SK증권" · title "PV",
-    org "웨드부시 댄 아이브스" → org "웨드부시" · title "애널리스트", org "일론 머스크" → org "테슬라" · title "CEO".
-    이름만 알고 회사를 모르면 회사를 모르는 것이다.
+  · opinion 줄은 누가 말했는지를 text가 아니라 **org(회사) · title(직함) · name(외국인 이름)** 칸에 적는다.
+    · **한국인: 회사명이 반드시 있어야 하고 이름은 어느 칸에도 절대 쓰지 않는다** → "org title 발언 : text"
+      (org "신한투자증권" · title "팀장" → "신한투자증권 팀장 발언 : 변동성 지속 예상").
+      틀림 → 맞음: title "김태성 본부장" → 회사를 모르므로 아래 규칙, org "SK증권 최영지" → org "SK증권" · title "PV".
+      이름만 알고 회사를 모르면 회사를 모르는 것이다.
+    · **외국인: 이름을 써도 된다** (유명인 · 해외 애널리스트) → name에 이름, 회사를 알면 org도 ("웨드부시 댄 아이브스 발언 :",
+      "일론 머스크 발언 :"). 회사명은 한국어 표기 (모건스탠리 · 골드만삭스 · 펀드스트랫).
   · 말한 사람의 회사를 자막에서 알 수 없으면 (진행자 · 패널 구분이 안 되거나 소속이 안 나오면):
-    외국 방송(영어 등)은 그 opinion 줄을 **넣지 않는다**.
+    외국 방송(영어 등)은 그 opinion 줄을 **넣지 않는다** (외국인 이름을 알면 위처럼 name으로 넣는다).
     한국어 방송은 빼지 않고 org를 비우고 title에 역할만 적는다 ("진행자" · "출연자", 역할도 모르면 비움). 채널 이름은 나중에 붙인다.
     "방송 의견" 같은 접두는 쓰지 않는다.
   · 발언자가 추정 · 예상 · 어림으로 말한 숫자는 **그 말투를 살린다**. like · around · or so · about · roughly → "약" · "안팎",
@@ -214,7 +215,7 @@ ORG_TAIL = ("증권", "투자", "운용", "은행", "리서치", "연구소", "�
 def _korean_name(t):
     """'김태성'처럼 성 + 두 글자 한글 (외국 이름 글자 · 회사 끝말 없음)"""
     return (bool(re.fullmatch(r"[가-힣]{3}", t)) and t[0] in KR_SURNAME and not (set(t) & FOREIGN_SYL)
-            and not t.endswith(ORG_TAIL))
+            and not t.endswith(ORG_TAIL) and not _is_title(t))   # '주지사' · '부사장'은 이름이 아님
 
 
 def _is_title(t):
@@ -223,7 +224,7 @@ def _is_title(t):
 
 
 def speaker_names(raw):
-    """요약 답의 speakers · picks[].speaker '이름 (소속)' → {이름: 소속}. 접두에 남은 사람 이름을 찾는 데 쓴다 (51절)"""
+    """요약 답의 speakers · picks[].speaker '이름 (소속)' → {한국 이름: 소속}. 접두에 남은 한국 사람 이름을 찾는 데 쓴다 (51절)"""
     out = {}
     xs = list(raw.get("speakers") or []) + [p.get("speaker") for p in raw.get("picks") or [] if isinstance(p, dict)]
     for x in xs:
@@ -232,15 +233,13 @@ def speaker_names(raw):
             continue
         aff = (m.group(2) or "").strip()
         name = " ".join(t for t in m.group(1).split() if not _is_title(t))   # '김창호 애널리스트' → '김창호'
-        if len(name) < 2 or name.endswith(ORG_TAIL) or name.endswith("은행"):   # '한국은행' · 'IPK증권'은 사람이 아님
-            continue
-        if aff or _korean_name(name):   # 괄호 소속이 없으면 한국 이름 모양일 때만 사람으로 본다
+        if _korean_name(name):   # 한국 사람만 (외국인 이름은 접두에 남겨도 됨, 사용자 11-26). '한국은행' · 'IPK증권'은 아님
             out.setdefault(name, aff)
     return out
 
 
 def _who(who, names, ko_channel):
-    """의견 줄 출처 → '회사명 직함' (사람 이름 없이). 회사를 모르면 한국어 방송은 '채널 이름 역할', 외국 방송은 "" (줄을 뺌). 51절"""
+    """의견 줄 출처 → 한국인은 '회사명 직함' (이름 없이), 외국인 이름은 남김. 회사를 모르면 한국어 방송은 '채널 이름 역할', 외국 방송은 "" (줄을 뺌). 51절"""
     toks = who.split()
     for name, aff in names.items():   # 1) speakers에 있는 이름을 지우고, 회사가 안 남으면 그 사람의 소속으로
         n = name.split()
@@ -253,9 +252,8 @@ def _who(who, names, ko_channel):
                 break
     # speakers에 없는 한국 이름: 직함 바로 앞의 '성 + 두 글자' ('이동근 대표' → '대표')
     toks = [t for i, t in enumerate(toks) if not (_korean_name(t) and i + 1 < len(toks) and _is_title(toks[i + 1]))]
-    titled = [i for i, t in enumerate(toks) if _is_title(t) and t not in TITLE_MODS]
-    if titled and titled[-1] < len(toks) - 1 and titled[-1] > 0:   # 2) '제프리스 애널리스트 제임스 크롬비' → 직함 뒤 이름을 자름
-        toks = toks[:titled[-1] + 1]
+    # 직함 뒤의 한국 이름 ('SK증권 PV 최영지' → 'SK증권 PV'). 외국인 이름은 남긴다 (사용자 11-26)
+    toks = [t for i, t in enumerate(toks) if not (_korean_name(t) and i > 0 and _is_title(toks[i - 1]))]
     if toks and not all(_is_title(t) for t in toks):
         return " ".join(toks)
     if not ko_channel:   # 3) 직함 · 역할만 남음 = 회사 모름
@@ -321,7 +319,11 @@ def _normalize(raw, ko_channel=None):
         for x in xs if isinstance(xs, list) else []:
             kind = x.get("kind") if isinstance(x, dict) else None
             if isinstance(x, dict):   # 51절: 의견 출처는 org · title 칸 → "org title 발언 : text" (사람 이름 칸이 없게)
-                text, who = clean(x.get("text", "")), " ".join(f"{x.get('org') or ''} {x.get('title') or ''}".split())
+                text, org, name = clean(x.get("text", "")), str(x.get("org") or ""), str(x.get("name") or "").strip()
+                if _korean_name(name.replace(" ", "")):   # 한국인 이름은 쓰지 않는다 (51절)
+                    name = ""
+                # 외국인 이름이 있으면 '회사 이름' ('웨드부시 댄 아이브스'), 없으면 '회사 직함'
+                who = " ".join(f"{org} {name if name else x.get('title') or ''}".split())
                 x = f"{who} 발언 : {text}" if kind == "opinion" and who and text and not SOURCE_HEAD.match(text) else text
             x = clean(x)
             x, kind = _line_kind(x, kind, ko_channel, names)
